@@ -47,18 +47,27 @@ def ensure_server():
         pass
 
     # Attempt to start via shell hook script or direct launch
-    start_script = os.path.expanduser("~/.zcode/scripts/stata-mcp-start.sh")
-    if os.path.exists(start_script):
+    start_script_ps1 = os.path.expanduser("~/.zcode/scripts/stata-mcp-start.ps1")
+    start_script_sh = os.path.expanduser("~/.zcode/scripts/stata-mcp-start.sh")
+    if sys.platform == "win32" and os.path.exists(start_script_ps1):
         try:
             subprocess.Popen(
-                ["/bin/bash", start_script],
+                ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", start_script_ps1],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            pass
+    elif os.path.exists(start_script_sh):
+        try:
+            subprocess.Popen(
+                ["/bin/bash", start_script_sh],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,
             )
         except Exception:
             pass
-
     for _ in range(60):
         time.sleep(0.5)
         try:

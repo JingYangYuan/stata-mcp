@@ -95,6 +95,22 @@ $content = $content.Replace('$StataPath = "E:\Stata18"', ('$StataPath = "' + $St
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText($hookScriptPath, $content, $utf8NoBom)
 Ok ("Hook script written to " + $hookScriptPath)
+# Install the proxy-safe stdio bridge script and CLI wrappers
+$bridgeSrc = Join-Path $PSScriptRoot "assets\stata-mcp-bridge.py"
+if (Test-Path $bridgeSrc) {
+    $bridgeDest = Join-Path $zcodeScripts "stata-mcp-bridge.py"
+    Copy-Item -Path $bridgeSrc -Destination $bridgeDest -Force
+    Ok ("Stdio bridge written to " + $bridgeDest)
+
+    $localBin = "$env:USERPROFILE\.local\bin"
+    New-Item -ItemType Directory -Force -Path $localBin | Out-Null
+    $cmdWrapper = "@echo off`r`n`"$venvPy`" `"$bridgeDest`" %*`r`n"
+    [System.IO.File]::WriteAllText((Join-Path $localBin "stata-mcp.cmd"), $cmdWrapper, [System.Text.Encoding]::ASCII)
+    $shWrapper = "#!/usr/bin/env bash`nexec `"$($venvPy -replace '\\', '/')`" `"$($bridgeDest -replace '\\', '/')`" `"`$@`"`n"
+    [System.IO.File]::WriteAllText((Join-Path $localBin "stata-mcp"), $shWrapper, $utf8NoBom)
+    Ok ("CLI wrappers installed to " + $localBin)
+}
+
 
 # Merge into ~/.zcode/cli/config.json without touching unrelated keys (e.g. other servers, API keys)
 $configPath = "$env:USERPROFILE\.zcode\cli\config.json"
@@ -143,6 +159,46 @@ if (-not $config.PSObject.Properties["hooks"]) {
 
 [System.IO.File]::WriteAllText($configPath, ($config | ConvertTo-Json -Depth 64), $utf8NoBom)
 Ok ("ZCode configuration merged into " + $configPath)
+
+# Merge into Oh My Pi (~/.omp/agent/mcp.json) if directory exists
+$ompConfigPath = "$env:USERPROFILE\.omp\agent\mcp.json"
+if (Test-Path (Split-Path $ompConfigPath)) {
+    if (Test-Path $ompConfigPath) {
+        $ompConfig = Get-Content $ompConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    } else {
+        $ompConfig = [pscustomobject]@{ mcpServers = (New-Object PSObject) }
+    }
+    if (-not $ompConfig.PSObject.Properties["mcpServers"]) {
+        $ompConfig | Add-Member -NotePropertyName "mcpServers" -NotePropertyValue (New-Object PSObject)
+    }
+    Ensure-Prop $ompConfig.mcpServers "stata-mcp" ([pscustomobject]@{
+        type = "stdio"
+        command = $venvPy
+        args = @($bridgeDest)
+    })
+    [System.IO.File]::WriteAllText($ompConfigPath, ($ompConfig | ConvertTo-Json -Depth 32), $utf8NoBom)
+    Ok ("Oh My Pi configuration merged into " + $ompConfigPath)
+}
+
+# Merge into Claude Code (~/.claude/mcp.json) if directory exists
+$claudeConfigPath = "$env:USERPROFILE\.claude\mcp.json"
+if (Test-Path (Split-Path $claudeConfigPath)) {
+    if (Test-Path $claudeConfigPath) {
+        $claudeConfig = Get-Content $claudeConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    } else {
+        $claudeConfig = [pscustomobject]@{ mcpServers = (New-Object PSObject) }
+    }
+    if (-not $claudeConfig.PSObject.Properties["mcpServers"]) {
+        $claudeConfig | Add-Member -NotePropertyName "mcpServers" -NotePropertyValue (New-Object PSObject)
+    }
+    Ensure-Prop $claudeConfig.mcpServers "stata-mcp" ([pscustomobject]@{
+        type = "stdio"
+        command = $venvPy
+        args = @($bridgeDest)
+    })
+    [System.IO.File]::WriteAllText($claudeConfigPath, ($claudeConfig | ConvertTo-Json -Depth 32), $utf8NoBom)
+    Ok ("Claude Code configuration merged into " + $claudeConfigPath)
+}
 
 # ---------------------------------------------------------------------------
 Step "6/6 Starting server and verifying health"
