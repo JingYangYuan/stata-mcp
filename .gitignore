@@ -1,8 +1,39 @@
+# ---------------------------------------------------------------------------
+# Never commit local runtime state, logs, or anything that may embed
+# machine-specific paths, credentials, or Stata output.
+# ---------------------------------------------------------------------------
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Runtime state produced by install.py (defaults to ~/.stata-mcp, but keep
+# this guard for users who point --home at the repository itself).
+.stata-mcp/
+state.json
+run/
+logs/
+*.log
+*.smcl
+*.dta
+*.gph
+
+# Local overrides / secrets
+.env
+.env.*
+*.local
+*.local.json
+secrets.*
+*.pem
+
+# Config backups written by `install.py config --write-config`
+*.bak
+*.bak-*
+
 # OS / editor junk
+.DS_Store
 Thumbs.db
 Desktop.ini
-.DS_Store
 *.swp
-
-# Local test artifacts
-*.log
+*~
