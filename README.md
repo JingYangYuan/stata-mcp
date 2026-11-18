@@ -152,6 +152,8 @@ MCP 客户端 ──stdio──> bin/stata-mcp-bridge.py ──HTTP(127.0.0.1)�
 
 ## 许可与致谢
 
-本部署工具为薄封装，不包含上游代码。服务端代码来自
-[hanlulong/stata-mcp](https://github.com/hanlulong/stata-mcp)（MIT），版权归其作者所有；
-安装时 clone 到本机后请遵循其许可证。
+本仓库（部署工具）采用 [MIT License](LICENSE)，Copyright (c) 2026 JingYangYuan。
+
+服务端代码**不在本仓库内**：安装时从 [hanlulong/stata-mcp](https://github.com/hanlulong/stata-mcp)
+（MIT，版权归其作者 Han Lulong 等所有）clone 到本机私有目录，或使用你已有的源码副本。
+使用、再分发该部分代码请遵循其许可证。
