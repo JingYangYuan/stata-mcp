@@ -35,11 +35,17 @@ def server_entry(
     port: int,
     home: Path,
     include_env: bool = True,
+    timeout_ms: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Build the MCP server entry for the requested transport."""
     if transport == "http":
-        return {"type": "http", "url": "http://%s:%d/mcp-streamable" % (host, port)}
-    entry: Dict[str, Any] = {"command": python, "args": [str(bridge)]}
+        entry: Dict[str, Any] = {"type": "http", "url": "http://%s:%d/mcp-streamable" % (host, port)}
+        if timeout_ms:
+            entry["timeoutMs"] = int(timeout_ms)
+        return entry
+    entry = {"command": python, "args": [str(bridge)]}
+    if timeout_ms:
+        entry["timeoutMs"] = int(timeout_ms)
     if include_env:
         env: Dict[str, str] = {}
         default_home = os.path.abspath(str(paths.default_home()))

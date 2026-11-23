@@ -15,16 +15,40 @@ install.py                     单入口（默认子命令 install）
     ├── ui.py                  tty 感知的终端输出（NO_COLOR 友好）
     ├── stata.py               Stata 安装发现（跨平台、无硬编码）
     ├── source.py              上游源码：本地目录 / git clone（可加镜像前缀）
-    ├── runtime.py             venv 构建、依赖安装、进程启停、健康探测
+    ├── runtime.py             venv 构建、依赖安装、双进程启停、健康探测
     ├── config_emit.py         MCP 片段生成 + 非破坏性 JSON 合并
     └── cli.py                 子命令与编排
 bin/
 ├── stata-mcp-bridge.py        stdio ↔ Streamable HTTP 桥（独立、零依赖）
-└── stata-mcp-start.py         启停器（独立、零依赖、跨平台）
+├── stata-mcp-start.py         启停器（独立、零依赖、跨平台，管两个进程）
+└── stata-mcp-jobs.py          本地网关 + 异步任务 + 单步日志（用服务端 venv）
 ```
 
-`bin/` 下两个脚本**不 import 上面的包**，只读 `<state>/state.json`，因为安装后被复制到状态目录里，
-必须能在没有仓库的情况下独立运行。少量重复是有意的取舍。
+`bin/` 下前两个脚本**不 import 上面的包**，只读 `<state>/state.json`，因为安装后被复制到状态目录里，
+必须能在没有仓库的情况下独立运行。`stata-mcp-jobs.py` 需要服务端 venv 里的 `mcp` 包（上游依赖之一），
+由状态记录的解释器启动。
+
+## 双进程结构与长任务
+
+```text
+MCP 客户端 ──> :4001 网关 stata-mcp-jobs.py ──> :4002 上游引擎 stata_mcp_server.py ──> Stata
+                    │
+                    ├─ tools/list、tools/call（保持上游工具名）
+                    ├─ stata_run_file/selection：最多等 20s，未完成即返回 job_id
+                    └─ jobs/<job_id>/records.jsonl + journal.log（每一步一条记录）
+```
+
+为什么要多一层：
+
+- 上游 `stata_run_file` 是一次阻塞调用，默认超时 600s；任何超过客户端工具超时
+  （不少宿主默认 30s）的 do 文件都会直接失败，且过程中没有任何可读输出。
+- 网关把同一个 do 文件变成后台任务，**客户端调用永远在 20s 内返回**，长任务再久也不会被掐；
+  之后用 `stata_job_tail` 按 offset 取“上次之后新增的步骤”，实现一步一条记录。
+- 上游源码**不做任何修改**：网关只调用它的 HTTP 接口（`/run_file/stream`、`/stop_execution`、
+  `/v1/tools`），所以重新 clone / 升级上游都不破坏本层。
+
+`stata-mcp-start.py` 幂等：网关健康即退出 0；否则先确保引擎健康（:4002），再启动网关（:4001），
+分别写 `run/server.pid`、`run/jobs.pid`，轮询 `/health` 直到就绪或超时。
 
 ## 为什么桥接用标准库
 
@@ -47,10 +71,21 @@ install
   3 复制 bin/ 到 <state>/bin
   4 取得源码（--server-dir，或复用 <state>/server，或 git clone）
   5 建 venv（uv 优先，否则 venv）+ 安装 src/requirements.txt
-  6 写 state.json
+  6 写 state.json（含 engine_port / default_timeout / sync_wait）
   7 生成执行壳（stata-mcp / stata-mcp.cmd）
-  8 启动并等待健康
+  8 启动引擎与网关并等待两者健康
   9 打印 stdio 配置片段（不写任何文件）
+```
+
+已装实例升级脚本、不改源码/依赖：
+
+```text
+refresh
+  1 停掉网关与引擎（按 pid 文件）
+  2 重新复制 bin/ 三个脚本
+  3 更新 state.json（端口、任务超时、日志路径）
+  4 重建执行壳
+  5 启动引擎 + 网关
 ```
 
 客户端调用时：
@@ -65,7 +100,23 @@ MCP 客户端 ── JSON-RPC over stdio ──> stata-mcp-bridge.py
 ```
 
 `stata-mcp-start.py` 幂等：健康即退出 0；否则用 `<state>/state.json` 记录的入口、解释器、
-Stata 路径启动，写 `run/server.pid`，轮询 `/health` 直到就绪或超时。
+Stata 路径启动引擎与网关，写 `run/server.pid` 与 `run/jobs.pid`，轮询 `/health` 直到就绪或超时。
+
+## 任务与单步记录
+
+```
+<state>/jobs/<job_id>/
+├── records.jsonl    每行一条：{"seq","step","t","kind","text"}，kind ∈ command/output/error/graph/marker
+├── journal.log      人可读：`[00:12.4] STEP 7  . regress y x, robust`
+└── meta.json        状态、耗时、超时、当前命令、日志路径
+```
+
+- `stata_job_tail(job_id, offset, mode="steps")` 只返回 `offset` 之后的新记录，默认每条命令配 4 行输出预览；
+  `mode="full"` 返回原始日志行。
+- 任务状态：`running / finished / failed / timed_out / cancelled / interrupted`。网关重启会把遗留的
+  `running` 标成 `interrupted`，记录仍然可读。
+- 保留最近 200 个任务 / 7 天，启动时清理；`cache/selection/` 里的临时 selection 文件保留 2 天。
+- 取消走上游 `/stop_execution`；并行任务需要不同的 `session_id`（上游会话模型）。
 
 ## 关键决策
 
@@ -75,6 +126,8 @@ Stata 路径启动，写 `run/server.pid`，轮询 `/health` 直到就绪或超�
 | 写入必须显式 `--write-config`，且只动一个 key | 把破坏面收敛到可审计的一处；写前备份、拒绝非法 JSON |
 | 只支持克隆上游源码，不 vendor | 避免许可证与版本漂移问题，也避免本仓库变成上游的分叉 |
 | 端口默认 4001 | 与上游扩展常用默认 4000 错开，避免抢占 |
+| 客户端端口永远留给网关，引擎用 port+1 | 已接入的客户端 URL 不需要改；上游升级也不影响客户端 |
+| 长任务一律异步 + 落盘日志 | 客户端工具超时（常见 30s）与服务端 600s 默认值都无法靠“调大一点”解决 |
 | 不杀端口占用者 | `--force-port` 一类行为会误杀用户进程，这里不提供 |
 | 状态集中在单一目录 | 卸载/审计/备份只需处理一个目录树 |
 | `bin/` 脚本零 import | 状态目录自包含，仓库删掉也不影响已装实例 |

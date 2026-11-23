@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Start / stop / inspect the local Stata MCP server.
+"""Start / stop / inspect the local Stata MCP runtime.
+
+The runtime is two processes:
+
+* the **engine** (upstream ``stata_mcp_server.py``) on the internal port, which
+  owns the Stata session and executes code;
+* the **gateway** (``stata-mcp-jobs.py``) on the client-facing port, which
+  exposes the MCP tools, runs long ``.do`` files as background jobs and keeps a
+  per-step journal.
 
 Cross-platform replacement for per-shell hook scripts: one standard-library
 Python file works on macOS, Linux and Windows, so nothing here depends on bash,
@@ -8,13 +16,13 @@ PowerShell, an editor extension, or a particular MCP host.
 
 Behaviour
 ---------
-``python3 stata-mcp-start.py``              start detached, wait for health, exit 0
-``python3 stata-mcp-start.py --foreground`` run in the foreground (logs to stderr)
+``python3 stata-mcp-start.py``              start both, wait for health, exit 0
+``python3 stata-mcp-start.py --foreground`` run the gateway in this process
 ``python3 stata-mcp-start.py --status``     exit 0 when healthy, 1 otherwise
-``python3 stata-mcp-start.py --stop``       stop the process recorded in the state
+``python3 stata-mcp-start.py --stop``       stop the processes recorded in state
 
 Reads ``<state>/state.json`` (written by ``install.py``); no other file is read
-except the server source it launches. Only the loopback port is contacted.
+except the server source it launches. Only the loopback ports are contacted.
 """
 
 from __future__ import annotations
@@ -98,9 +106,9 @@ def is_alive(pid):
     return True
 
 
-def read_pid(home):
+def read_pid(path):
     try:
-        with open(os.path.join(home, "run", "server.pid"), "r", encoding="utf-8") as handle:
+        with open(path, "r", encoding="utf-8") as handle:
             return int(handle.read().strip())
     except (OSError, ValueError):
         return 0
@@ -114,10 +122,8 @@ def ensure_private_dir(path):
         pass
 
 
-def write_pid(home, pid):
-    directory = os.path.join(home, "run")
-    ensure_private_dir(directory)
-    path = os.path.join(directory, "server.pid")
+def write_pid(path, pid):
+    ensure_private_dir(os.path.dirname(path) or ".")
     with open(path, "w", encoding="utf-8") as handle:
         handle.write("%d\n" % pid)
     try:
@@ -126,7 +132,15 @@ def write_pid(home, pid):
         pass
 
 
-def server_argv(state, host, port, log_file):
+def ports(state, host, port_override=None):
+    port = int(port_override or os.environ.get("STATA_MCP_PORT") or state.get("port") or 4001)
+    engine = int(state.get("engine_port") or port + 1)
+    if engine == port:
+        engine = port + 1
+    return port, engine
+
+
+def engine_argv(state, host, engine_port, log_file):
     entry = state.get("server_entry")
     python = state.get("python") or sys.executable
     stata_path = state.get("stata_path")
@@ -143,7 +157,7 @@ def server_argv(state, host, port, log_file):
         "--host",
         host,
         "--port",
-        str(port),
+        str(engine_port),
         "--log-file",
         log_file,
     ]
@@ -153,19 +167,28 @@ def server_argv(state, host, port, log_file):
     return argv
 
 
-def start(home, state, host, port, wait, foreground):
-    info = health(host, port)
-    if info:
-        return 0
-    log_file = state.get("log_file") or os.path.join(home, "logs", "server.log")
-    argv = server_argv(state, host, port, log_file)
+def gateway_argv(state, home, host, port):
+    script = state.get("jobs_file") or os.path.join(home, "bin", "stata-mcp-jobs.py")
+    python = state.get("python") or sys.executable
+    if not os.path.isfile(script):
+        raise SystemExit("stata-mcp-start: gateway not found (%s); re-run install" % script)
+    return [
+        python,
+        script,
+        "--home",
+        home,
+        "--host",
+        host,
+        "--port",
+        str(port),
+        "--log-file",
+        os.path.join(home, "logs", "gateway.log"),
+    ]
 
-    if foreground:
-        os.execv(argv[0], argv)
 
-    console = os.path.join(home, "logs", "server.console.log")
-    ensure_private_dir(os.path.dirname(console))
-    handle = open(console, "ab")
+def spawn(argv, console_log):
+    ensure_private_dir(os.path.dirname(console_log) or ".")
+    handle = open(console_log, "ab")
     try:
         if os.name == "nt":
             flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
@@ -182,14 +205,43 @@ def start(home, state, host, port, wait, foreground):
             )
     finally:
         handle.close()
-    write_pid(home, process.pid)
-    return 0 if wait_healthy(host, port, wait) else 1
+    return process
 
 
-def stop(home, host, port):
-    pid = read_pid(home)
-    if not is_alive(pid):
-        return 0 if not health(host, port) else 1
+def start(home, state, host, port_override, wait, foreground):
+    port, engine_port = ports(state, host, port_override)
+    log_file = state.get("log_file") or os.path.join(home, "logs", "server.log")
+    engine_pid_file = os.path.join(home, "run", "server.pid")
+    gateway_pid_file = os.path.join(home, "run", "jobs.pid")
+
+    engine_ok = bool(health(host, engine_port))
+    gateway_ok = bool(health(host, port))
+    if engine_ok and gateway_ok:
+        return 0
+
+    if not engine_ok:
+        process = spawn(engine_argv(state, host, engine_port, log_file), os.path.join(home, "logs", "server.console.log"))
+        write_pid(engine_pid_file, process.pid)
+        if not wait_healthy(host, engine_port, wait):
+            raise SystemExit("stata-mcp-start: engine did not become healthy on %s:%d" % (host, engine_port))
+
+    if gateway_ok:
+        return 0
+
+    if foreground:
+        argv = gateway_argv(state, home, host, port)
+        os.execv(argv[0], argv)
+
+    process = spawn(gateway_argv(state, home, host, port), os.path.join(home, "logs", "gateway.console.log"))
+    write_pid(gateway_pid_file, process.pid)
+    if not wait_healthy(host, port, wait):
+        return 1
+    return 0
+
+
+def stop_one(pid, label):
+    if pid <= 0 or not is_alive(pid):
+        return False
     try:
         if os.name == "nt":
             subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -205,44 +257,59 @@ def stop(home, host, port):
             os.kill(pid, signal.SIGKILL)
         except OSError:
             pass
-    try:
-        os.unlink(os.path.join(home, "run", "server.pid"))
-    except OSError:
-        pass
+    return True
+
+
+def stop(home, state, host, port_override):
+    port, engine_port = ports(state, host, port_override)
+    gateway_pid_file = os.path.join(home, "run", "jobs.pid")
+    engine_pid_file = os.path.join(home, "run", "server.pid")
+
+    stopped = False
+    stopped = stop_one(read_pid(gateway_pid_file), "gateway") or stopped
+    stopped = stop_one(read_pid(engine_pid_file), "engine") or stopped
+    for path in (gateway_pid_file, engine_pid_file):
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+    if not stopped:
+        if health(host, port) or health(host, engine_port):
+            return 1
     return 0
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="stata-mcp-start",
-        description="Start, stop or check the local Stata MCP server.",
+        description="Start, stop or check the local Stata MCP runtime (engine + gateway).",
     )
     parser.add_argument("--home", help="state directory (default: ~/.stata-mcp or STATA_MCP_HOME)")
     parser.add_argument("--host", help="host to bind/probe (default from state.json, else 127.0.0.1)")
-    parser.add_argument("--port", help="port to bind/probe (default from state.json, else 4001)")
+    parser.add_argument("--port", help="client-facing port (default from state.json, else 4001)")
     parser.add_argument("--wait", type=float, default=120.0, help="seconds to wait for health (default: 120)")
-    parser.add_argument("--foreground", action="store_true", help="run the server in this process")
+    parser.add_argument("--foreground", action="store_true", help="run the gateway in this process")
     parser.add_argument("--status", action="store_true", help="report health and exit")
-    parser.add_argument("--stop", action="store_true", help="stop the recorded server process")
+    parser.add_argument("--stop", action="store_true", help="stop the recorded processes")
     args = parser.parse_args(argv)
 
     home = resolve_home(args.home)
     state = load_state(home)
     host = args.host or os.environ.get("STATA_MCP_HOST") or state.get("host") or "127.0.0.1"
-    try:
-        port = int(args.port or os.environ.get("STATA_MCP_PORT") or state.get("port") or 4001)
-    except (TypeError, ValueError):
-        port = 4001
+    port, engine_port = ports(state, host, args.port)
 
     if args.status:
         info = health(host, port)
         if info:
+            info = dict(info)
+            info.setdefault("engine_port", engine_port)
             sys.stdout.write(json.dumps(info, ensure_ascii=False) + "\n")
             return 0
         return 1
     if args.stop:
-        return stop(home, host, port)
-    return start(home, state, host, port, args.wait, args.foreground)
+        return stop(home, state, host, args.port)
+    return start(home, state, host, args.port, args.wait, args.foreground)
 
 
 if __name__ == "__main__":

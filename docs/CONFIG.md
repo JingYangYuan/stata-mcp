@@ -37,6 +37,28 @@ HTTP 片段：
 }
 ```
 
+### 客户端工具超时
+
+有些客户端会取消超过固定时长（例如 30 秒）的 MCP 工具调用。网关已经把长 do 文件改成后台任务，
+同步调用最多 20 秒就会返回 `job_id`，所以**不配置也能跑长任务**。若仍想给同步调用留余量，
+可以让片段带上客户端专用字段（目前仅在你显式要求时生成）：
+
+```bash
+python3 install.py config --transport http --timeout-ms 120000
+```
+
+```json
+{
+  "mcpServers": {
+    "stata-mcp": {
+      "type": "http",
+      "timeoutMs": 120000,
+      "url": "http://127.0.0.1:4001/mcp-streamable"
+    }
+  }
+}
+```
+
 何时用哪个：
 
 - **stdio**：客户端以子进程方式启动 MCP 服务器（最常见）。桥接会自动拉起后台服务、

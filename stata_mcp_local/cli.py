@@ -47,7 +47,10 @@ def _state_summary(state: Dict[str, Any]) -> List[str]:
         ("stata_path", "Stata installation"),
         ("stata_edition", "Stata edition"),
         ("host", "bind host"),
-        ("port", "port"),
+        ("port", "gateway port"),
+        ("engine_port", "engine port"),
+        ("default_timeout", "job timeout (s)"),
+        ("sync_wait", "sync wait (s)"),
         ("commit", "source commit"),
         ("installed_at", "installed at"),
     ]
@@ -67,6 +70,9 @@ def _record_install(
     host: str,
     port: int,
     repo: str,
+    engine_port: int,
+    default_timeout: float,
+    sync_wait: float,
 ) -> Dict[str, Any]:
     state = {
         "installed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
@@ -85,9 +91,16 @@ def _record_install(
         "stata_version": cand.version,
         "host": host,
         "port": port,
+        "engine_port": engine_port,
+        "default_timeout": default_timeout,
+        "sync_wait": sync_wait,
         "log_file": str(layout.log_file),
+        "gateway_log_file": str(layout.gateway_log_file),
         "bridge": str(layout.bridge_file),
         "launcher": str(layout.launcher_file),
+        "jobs_file": str(layout.gateway_file),
+        "jobs_dir": str(layout.jobs_dir),
+        "jobs_pid_file": str(layout.gateway_pid_file),
     }
     layout.save_state(state)
     return state
@@ -135,7 +148,9 @@ def cmd_install(args: argparse.Namespace) -> int:
     ui.info("state directory : %s" % layout.home)
     ui.info("server source   : %s" % (args.server_dir or source.mirror_url(args.repo, args.mirror)))
     ui.info("venv            : %s" % (args.venv or layout.venv_dir))
-    ui.info("endpoint        : http://%s:%d%s" % (host, port, runtime.MCP_PATH))
+    ui.info("endpoint        : http://%s:%d%s (gateway)" % (host, port, runtime.MCP_PATH))
+    ui.info("engine endpoint : http://%s:%d (internal, upstream server)" % (host, port + 1))
+    ui.info("job timeout     : %.0fs (%.1fh), sync wait %.0fs" % (args.default_timeout, args.default_timeout / 3600.0, args.sync_wait))
     ui.info("config files    : none modified (snippet is printed; use `config --write-config PATH`)")
     if plan_only:
         ui.info("")
@@ -147,6 +162,11 @@ def cmd_install(args: argparse.Namespace) -> int:
         return 1
 
     layout.ensure()
+
+    previous = layout.load_state()
+    if runtime.read_pid(layout) or runtime.read_gateway_pid(layout):
+        ui.step("Stopping the previous runtime")
+        ui.ok(runtime.stop(layout, previous))
 
     ui.step("Installing helper scripts")
     written = runtime.write_helper_scripts(layout, Path(__file__).resolve().parent.parent)
@@ -192,8 +212,22 @@ def cmd_install(args: argparse.Namespace) -> int:
             ui.warn("no requirements file in source tree; skipping dependency install")
 
     ui.step("Recording installation")
-    state = _record_install(layout, build, str(python), choice, target, host, port, args.repo)
+    engine_port = runtime.pick_engine_port(host, port)
+    state = _record_install(
+        layout,
+        build,
+        str(python),
+        choice,
+        target,
+        host,
+        port,
+        args.repo,
+        engine_port,
+        float(args.default_timeout),
+        float(args.sync_wait),
+    )
     ui.ok("state written to %s" % layout.state_file)
+    ui.info("client-facing port %d, engine port %d" % (port, engine_port))
 
     ui.step("Creating launchers")
     for path in runtime.write_launchers(layout, str(python)):
@@ -238,7 +272,13 @@ def cmd_config(args: argparse.Namespace) -> int:
     host = state.get("host", args.host)
     port = int(state.get("port", args.port))
     entry = config_emit.server_entry(
-        transport, str(python), layout.bridge_file, host, port, layout.home
+        transport,
+        str(python),
+        layout.bridge_file,
+        host,
+        port,
+        layout.home,
+        timeout_ms=args.timeout_ms,
     )
 
     shown = config_emit.render(config_emit.snippet(entry, root=args.root, key=args.key))
@@ -279,12 +319,72 @@ def cmd_start(args: argparse.Namespace) -> int:
     state = _load_state_or_fail(layout)
     if args.port:
         state["port"] = int(args.port)
+        if not state.get("engine_port") or int(state["engine_port"]) == int(args.port):
+            state["engine_port"] = runtime.pick_engine_port(state.get("host", runtime.DEFAULT_HOST), int(args.port))
     try:
         _started, message = runtime.start(layout, state, wait=float(args.wait))
     except runtime.RuntimeError_ as exc:
         ui.error(str(exc))
         return 2
+    layout.save_state(state)
     ui.ok(message)
+    return 0
+
+
+def cmd_refresh(args: argparse.Namespace) -> int:
+    """Re-stage the gateway/bridge/launcher and restart, without cloning or pip."""
+    layout = _layout(args)
+    state = _load_state_or_fail(layout)
+    host = state.get("host", runtime.DEFAULT_HOST)
+    port = int(args.port or state.get("port") or runtime.DEFAULT_PORT)
+
+    ui.step("Stopping the running runtime")
+    ui.ok(runtime.stop(layout, state))
+
+    ui.step("Re-staging helper scripts")
+    for path in runtime.write_helper_scripts(layout, Path(__file__).resolve().parent.parent):
+        ui.ok(str(path))
+
+    ui.step("Updating the installation record")
+    engine_port = runtime.pick_engine_port(host, port, state.get("engine_port"))
+    state.update(
+        {
+            "installer_version": __version__,
+            "refreshed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "port": port,
+            "engine_port": engine_port,
+            "log_file": str(layout.log_file),
+            "gateway_log_file": str(layout.gateway_log_file),
+            "bridge": str(layout.bridge_file),
+            "launcher": str(layout.launcher_file),
+            "jobs_file": str(layout.gateway_file),
+            "jobs_dir": str(layout.jobs_dir),
+            "jobs_pid_file": str(layout.gateway_pid_file),
+            "default_timeout": float(args.default_timeout or state.get("default_timeout") or runtime.DEFAULT_JOB_TIMEOUT),
+            "sync_wait": float(args.sync_wait or state.get("sync_wait") or runtime.DEFAULT_SYNC_WAIT),
+        }
+    )
+    layout.save_state(state)
+    ui.ok("client-facing port %d, engine port %d" % (port, engine_port))
+
+    ui.step("Creating launchers")
+    python = state.get("python")
+    if not python:
+        ui.error("no interpreter recorded; run `install` instead")
+        return 2
+    for path in runtime.write_launchers(layout, str(python)):
+        ui.ok(str(path))
+
+    ui.step("Starting the runtime")
+    try:
+        _started, message = runtime.start(layout, state, wait=float(args.wait))
+    except runtime.RuntimeError_ as exc:
+        ui.error(str(exc))
+        ui.hint("see %s" % layout.gateway_log_file)
+        return 2
+    ui.ok(message)
+    ui.info("job timeout %.0fs, sync wait %.0fs" % (state["default_timeout"], state["sync_wait"]))
+    ui.hint("run `python3 %s verify` for an end-to-end smoke test" % PROG)
     return 0
 
 
@@ -302,16 +402,27 @@ def cmd_status(args: argparse.Namespace) -> int:
     for line in _state_summary(state):
         ui.info(line)
     info = runtime.status(layout, state)
-    ui.step("Server")
+    ui.step("Gateway (client-facing)")
     if info["healthy"]:
-        ui.ok("healthy on %s:%d%s" % (info["host"], info["port"], " (pid %s)" % info["pid"] if info["pid"] else ""))
+        ui.ok(
+            "healthy on %s:%d%s"
+            % (info["host"], info["port"], " (pid %s)" % info["pid"] if info["pid"] else "")
+        )
         ui.info(json.dumps(info["health"], ensure_ascii=False))
-        return 0
-    ui.warn("not healthy on %s:%d" % (info["host"], info["port"]))
-    if info["pid"]:
-        ui.info("process %s is alive but not answering yet" % info["pid"])
-    ui.hint("start it with `python3 %s start`" % PROG)
-    return 1
+    else:
+        ui.warn("not healthy on %s:%d" % (info["host"], info["port"]))
+        if info["pid"]:
+            ui.info("process %s is alive but not answering yet" % info["pid"])
+    engine = info.get("engine", {})
+    ui.step("Engine (internal)")
+    if engine.get("healthy"):
+        ui.ok("healthy on %s:%d%s" % (info["host"], engine["port"], " (pid %s)" % engine["pid"] if engine.get("pid") else ""))
+    else:
+        ui.warn("not healthy on %s:%d" % (info["host"], engine.get("port")))
+    if not info["healthy"]:
+        ui.hint("start it with `python3 %s start`" % PROG)
+        return 1
+    return 0
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -352,18 +463,43 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         problems += 1
         ui.warn("not installed in this directory")
 
-    ui.step("Server")
+    ui.step("Runtime")
     info = runtime.status(layout, state)
     if info["healthy"]:
-        ui.ok("healthy on %s:%d" % (info["host"], info["port"]))
+        ui.ok("gateway healthy on %s:%d" % (info["host"], info["port"]))
         ui.info(json.dumps(info["health"], ensure_ascii=False))
     else:
         problems += 1
-        ui.warn("no healthy server on %s:%d" % (info["host"], info["port"]))
-        tail = runtime._log_tail(Path(state.get("log_file") or layout.log_file))
+        ui.warn("no healthy gateway on %s:%d" % (info["host"], info["port"]))
+        tail = runtime._log_tail(Path(state.get("gateway_log_file") or layout.gateway_log_file))
         if tail:
             ui.info("last log lines:")
             ui.info(tail)
+
+    engine = info.get("engine", {})
+    if engine.get("healthy"):
+        ui.ok("engine healthy on %s:%d" % (info["host"], engine["port"]))
+    else:
+        problems += 1
+        ui.warn("no healthy engine on %s:%d" % (info["host"], engine.get("port")))
+        tail = runtime._log_tail(Path(state.get("log_file") or layout.log_file))
+        if tail:
+            ui.info("last engine log lines:")
+            ui.info(tail)
+
+    ui.info("job timeout: %ss; sync wait: %ss" % (state.get("default_timeout", runtime.DEFAULT_JOB_TIMEOUT), state.get("sync_wait", runtime.DEFAULT_SYNC_WAIT)))
+    jobs = sorted(layout.jobs_dir.glob("*")) if layout.jobs_dir.is_dir() else []
+    if jobs:
+        size = 0
+        for entry in jobs:
+            for path in entry.rglob("*"):
+                try:
+                    size += path.stat().st_size
+                except OSError:
+                    pass
+        ui.info("jobs: %d recorded, %.1f MiB under %s" % (len(jobs), size / 1048576.0, layout.jobs_dir))
+    else:
+        ui.info("jobs: none yet (%s)" % layout.jobs_dir)
 
     ui.step("Related environment variables (names only unless set by this project)")
     for key in ("STATA_MCP_HOME", "STATA_MCP_HOST", "STATA_MCP_PORT", "STATA_MCP_PYTHON", "STATA_MCP_AUTOSTART"):
@@ -406,6 +542,12 @@ def cmd_verify(args: argparse.Namespace) -> int:
             "method": "tools/call",
             "params": {"name": "stata_run_selection", "arguments": {"selection": "display 1+1"}},
         },
+        {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {"name": "stata_job_list", "arguments": {}},
+        },
     ]
     payload = "\n".join(json.dumps(item) for item in requests) + "\n"
     env = dict(os.environ)
@@ -440,6 +582,11 @@ def cmd_verify(args: argparse.Namespace) -> int:
     ui.ok("received %d JSON-RPC message(s) over stdio" % len(lines))
     if not errors and "2" in result.stdout:
         ui.ok("Stata computed 1+1 through the bridge")
+        if "job_id" in result.stdout or '"jobs"' in result.stdout:
+            ui.ok("job tools answered through the gateway")
+        else:
+            ui.warn("job tools did not answer; check `status` and the gateway log")
+            return 1
         return 0
     ui.warn("responses received but the expected Stata result was not found")
     ui.info((result.stdout or "").strip()[:800])
@@ -460,7 +607,7 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
         return 0
 
     ui.step("Stopping server")
-    if runtime.read_pid(layout) is not None:
+    if runtime.read_pid(layout) is not None or runtime.read_gateway_pid(layout) is not None:
         ui.ok(runtime.stop(layout, state))
     else:
         ui.info("no server process recorded; nothing to stop")
@@ -472,7 +619,15 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
             )
 
     ui.step("Removing runtime files")
-    targets: List[Path] = [layout.venv_dir, layout.server_dir, layout.bin_dir, layout.log_dir, layout.run_dir, layout.cache_dir]
+    targets: List[Path] = [
+        layout.venv_dir,
+        layout.server_dir,
+        layout.bin_dir,
+        layout.log_dir,
+        layout.run_dir,
+        layout.cache_dir,
+        layout.jobs_dir,
+    ]
     if args.purge:
         targets.append(layout.home)
     for target in targets:
@@ -498,13 +653,17 @@ State directory
   explicitly with `config --write-config PATH` (and its timestamped backup).
 
 Files written
-  state.json              installation record (paths, port, interpreter)
+  state.json              installation record (paths, ports, interpreter)
   server/                 upstream source checkout (only when cloning)
   venv/                   private Python environment for the server
-  bin/                    stdio bridge, launcher, exec shims
-  logs/server.log         server log (may contain Stata command output/paths)
-  logs/server.console.log captured stdout/stderr of the server process
-  run/server.pid          pid of the server process
+  bin/                    gateway, stdio bridge, launcher, exec shims
+  logs/server.log         engine log (may contain Stata command output/paths)
+  logs/gateway.log        gateway log (job starts, engine errors)
+  logs/*.console.log      captured stdout/stderr of the two processes
+  jobs/<job_id>/          per-job journal: records.jsonl, journal.log, meta.json
+                          (kept 7 days / 200 jobs, then removed automatically)
+  run/server.pid          pid of the engine process
+  run/jobs.pid            pid of the gateway process
 
 Network
   git clone <repo>        only on `install` without --server-dir, and only the
@@ -574,6 +733,18 @@ def build_parser() -> argparse.ArgumentParser:
     install.add_argument("--skip-deps", action="store_true", help="do not install the requirements")
     install.add_argument("--no-start", action="store_true", help="install without starting the server")
     install.add_argument("--wait", type=float, default=120.0, help="seconds to wait for health (default: 120)")
+    install.add_argument(
+        "--default-timeout",
+        type=float,
+        default=runtime.DEFAULT_JOB_TIMEOUT,
+        help="default timeout for a Stata job in seconds (default: 21600 = 6h)",
+    )
+    install.add_argument(
+        "--sync-wait",
+        type=float,
+        default=runtime.DEFAULT_SYNC_WAIT,
+        help="seconds a synchronous tool call waits before returning a job id (default: 20)",
+    )
     install.add_argument("--print-plan", "--dry-run", dest="print_plan", action="store_true", help="show what would happen and exit")
     install.add_argument("-y", "--yes", action="store_true", help="do not prompt")
     install.set_defaults(func=cmd_install)
@@ -589,7 +760,21 @@ def build_parser() -> argparse.ArgumentParser:
     config.add_argument("--host", default=runtime.DEFAULT_HOST)
     config.add_argument("--port", type=int, default=runtime.DEFAULT_PORT)
     config.add_argument("--python", metavar="EXE")
+    config.add_argument(
+        "--timeout-ms",
+        type=int,
+        metavar="MS",
+        help="add a client-side tool-call timeout (e.g. 120000) to HTTP entries; ignored otherwise",
+    )
     config.set_defaults(func=cmd_config)
+
+    refresh = sub.add_parser("refresh", help="re-stage scripts and restart without cloning or pip")
+    refresh.add_argument("--home", metavar="DIR")
+    refresh.add_argument("--port", type=int, help="new client-facing port (engine moves to port+1)")
+    refresh.add_argument("--wait", type=float, default=120.0)
+    refresh.add_argument("--default-timeout", type=float, default=None)
+    refresh.add_argument("--sync-wait", type=float, default=None)
+    refresh.set_defaults(func=cmd_refresh)
 
     start = sub.add_parser("start", help="start the server in the background")
     start.add_argument("--home", metavar="DIR")

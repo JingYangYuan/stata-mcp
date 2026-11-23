@@ -45,7 +45,9 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 4001
 MCP_PATH = "/mcp-streamable"
 HEALTH_PATH = "/health"
-DEFAULT_TIMEOUT = 1800.0
+# Jobs are polled with short calls, so a long per-request timeout is only a
+# safety net for synchronous runs (default job timeout is 6 hours).
+DEFAULT_TIMEOUT = 21600.0
 DEFAULT_AUTOSTART_TIMEOUT = 120.0
 
 
@@ -366,7 +368,7 @@ def parse_args(argv=None):
     )
     parser.add_argument("--autostart-timeout", help="seconds to wait for autostart (default: 120)")
     parser.add_argument("--start-cmd", help="command used to start the server during autostart")
-    parser.add_argument("--timeout", help="per-request timeout in seconds (default: 1800)")
+    parser.add_argument("--timeout", help="per-request timeout in seconds (default: 21600)")
     return parser.parse_args(argv)
 
 

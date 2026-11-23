@@ -81,6 +81,10 @@ class Layout:
     def cache_dir(self) -> Path:
         return self.home / "cache"
 
+    @property
+    def jobs_dir(self) -> Path:
+        return self.home / "jobs"
+
     # -- files ------------------------------------------------------------
     @property
     def state_file(self) -> Path:
@@ -95,12 +99,24 @@ class Layout:
         return self.bin_dir / "stata-mcp-start.py"
 
     @property
+    def gateway_file(self) -> Path:
+        return self.bin_dir / "stata-mcp-jobs.py"
+
+    @property
     def log_file(self) -> Path:
         return self.log_dir / "server.log"
 
     @property
+    def gateway_log_file(self) -> Path:
+        return self.log_dir / "gateway.log"
+
+    @property
     def pid_file(self) -> Path:
         return self.run_dir / "server.pid"
+
+    @property
+    def gateway_pid_file(self) -> Path:
+        return self.run_dir / "jobs.pid"
 
     def venv_python(self) -> Path:
         if os.name == "nt":
@@ -115,6 +131,7 @@ class Layout:
             self.log_dir,
             self.run_dir,
             self.cache_dir,
+            self.jobs_dir,
         ]
 
     def ensure(self) -> "Layout":

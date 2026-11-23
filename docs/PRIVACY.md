@@ -14,11 +14,18 @@
 | `<state>/state.json` | 安装记录：源码路径、入口、解释器、Stata 路径、端口、commit | `install` |
 | `<state>/server/` | 上游源码检出 | 仅在不给 `--server-dir` 时 `git clone` |
 | `<state>/venv/` | 服务端专用 Python 环境 | `install`（`--venv` 时跳过） |
-| `<state>/bin/` | 桥接、启停器、执行壳 | `install` |
-| `<state>/logs/server.log` | 服务端日志（**可能含 Stata 命令输出、数据集路径**） | 运行期 |
-| `<state>/logs/server.console.log` | 服务端 stdout/stderr | 运行期 |
-| `<state>/run/server.pid` | 服务进程号 | 运行期 |
+| `<state>/bin/` | 网关、桥接、启停器、执行壳 | `install` / `refresh` |
+| `<state>/jobs/<job_id>/` | 任务日志：`records.jsonl`、`journal.log`、`meta.json`（**含 Stata 命令与输出**） | 每次运行 do 文件 |
+| `<state>/cache/selection/` | `stata_run_selection` 的临时 do 文件（保留 2 天） | 运行期 |
+| `<state>/logs/server.log` | 引擎日志（**可能含 Stata 命令输出、数据集路径**） | 运行期 |
+| `<state>/logs/gateway.log` | 网关日志（任务启动、引擎错误） | 运行期 |
+| `<state>/logs/*.console.log` | 两个进程的 stdout/stderr | 运行期 |
+| `<state>/run/server.pid` | 引擎进程号 | 运行期 |
+| `<state>/run/jobs.pid` | 网关进程号 | 运行期 |
 | `<用户显式指定的 JSON>` + `*.bak-<时间戳>` | 仅 `config --write-config PATH` | 用户主动触发 |
+
+目录 0700、文件 0600（`state.json`、pid、日志、片段文件、执行壳），在支持的平台上尽力设置。
+任务目录只保留最近 200 个 / 7 天，启动时自动清理。
 
 目录 0700、文件 0600（`state.json`、pid、日志、片段文件、执行壳），在支持的平台上尽力设置。
 日志里可能出现你的数据路径与 Stata 输出——这是本地日志的正常内容，也是为什么 `.gitignore`

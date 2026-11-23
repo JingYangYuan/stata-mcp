@@ -55,13 +55,16 @@ python3 install.py install --python /path/to/python3.12
 
 ## 服务端启动阶段
 
-### `server did not become healthy on 127.0.0.1:4001`
+### `gateway did not become healthy on 127.0.0.1:4001`
 
-安装器会打印日志尾部。也可直接看：
+现在运行时是两个进程：客户端端口（默认 4001）是网关，内部端口（默认 4002）是上游引擎。
+安装器会打印对应日志尾部。也可直接看：
 
 ```bash
-tail -50 ~/.stata-mcp/logs/server.log
-tail -50 ~/.stata-mcp/logs/server.console.log
+tail -50 ~/.stata-mcp/logs/gateway.log
+tail -50 ~/.stata-mcp/logs/gateway.console.log
+tail -50 ~/.stata-mcp/logs/server.log          # 引擎
+tail -50 ~/.stata-mcp/logs/server.console.log  # 引擎 stdout/stderr
 ```
 
 高概率原因：
@@ -69,7 +72,8 @@ tail -50 ~/.stata-mcp/logs/server.console.log
 | 现象 | 处理 |
 |---|---|
 | 日志提示 Stata 未找到 | `--stata-path` 指向安装根（含 `StataMP.app` 或 `Stata*-64.exe` 的那一层） |
-| 端口被占用 | 换端口：`--port 4002`，并同步更新客户端片段（`config` 会带 `STATA_MCP_PORT`） |
+| 网关端口被占用 | 换端口：`--port 4011`，引擎会自动用 4012 |
+| 引擎端口被占用 | 正常安装会自动顺延；`install.py doctor` 会显示实际 `engine port` |
 | 许可证/授权问题 | 先在终端里直接运行 Stata 确认可启动 |
 | 依赖缺失 | 重跑安装，或 `--venv` 指定已备好依赖的环境 |
 
@@ -79,11 +83,11 @@ tail -50 ~/.stata-mcp/logs/server.console.log
 假装成功：
 
 ```bash
-python3 install.py install --port 4002        # 换一个空闲端口
+python3 install.py refresh --port 4011        # 换一个空闲端口（引擎自动顺延）
 # 或先停掉那个实例，再用原端口重装
 ```
 
-判定依据是 `<state>/run/server.pid`：健康检查能通、但没有本安装的 pid 文件时即视为外来实例。
+判定依据是 `<state>/run/jobs.pid`：健康检查能通、但没有本安装的 pid 文件时即视为外来实例。
 
 ### 端口被别的程序占用
 
@@ -104,8 +108,8 @@ netstat -ano | findstr :4001
 
 ### 客户端能启动但工具列表为空 / 调用超时
 
-1. `python3 install.py status` 确认服务健康。
-2. `python3 install.py verify` —— 它绕过客户端，直接经桥接跑 `display 1+1`：
+1. `python3 install.py status` 确认网关与引擎都健康。
+2. `python3 install.py verify` —— 它绕过客户端，直接经桥接跑 `display 1+1` 并调一次 `stata_job_list`：
    - 通过 → 问题在客户端配置（路径、传输类型、有没有走代理）。
    - 不通过 → 问题在服务端（回到上一节）。
 3. 用 `STATA_MCP_DEBUG=1` 重试可看到桥接的诊断信息（只写 stderr）：
@@ -113,6 +117,37 @@ netstat -ano | findstr :4001
    ```bash
    STATA_MCP_DEBUG=1 /path/to/python ~/.stata-mcp/bin/stata-mcp-bridge.py < request.jsonl
    ```
+
+### 大型 do 文件跑很久 / 客户端报 “tool timed out”
+
+客户端可能在 30 秒左右就取消 MCP 工具调用（与服务端超时无关）。处理方式：
+
+1. **推荐**：用 `stata_run_file`。网关最多等 20 秒，长任务会立刻返回 `job_id`，之后
+   `stata_job_tail(job_id, offset)` 取新增步骤、`stata_job_status(job_id, wait_seconds=20)` 等结果。
+   这样无论跑 6 小时还是客户端超时 30 秒都不影响。
+2. 如果客户端支持工具超时配置（例如 ZCode 的 `timeoutMs`），可以把它调大，给同步调用留余量；
+   但不要让同步调用承担小时级任务。
+3. 任务超时默认 6 小时，可用 `install.py refresh --default-timeout 43200` 调整；
+   单次调用也可以传 `timeout`。
+
+怎么看单步进度：
+
+```bash
+tail -f ~/.stata-mcp/jobs/<job_id>/journal.log
+```
+
+日志按 Stata 回显的命令切步：`[00:12.4] STEP 7  . regress y x, robust`。
+
+### 任务一直是 `running` 但没有任何新记录
+
+- `sleep`、导入超大文件等命令在完成前不会产生新的日志行，属于正常。
+- 超过任务 timeout 后引擎会返回 `ERROR: Execution timed out after ...`，状态变 `timed_out`。
+- 上一次网关进程被强杀留下的任务会显示 `interrupted`，记录仍可读；重新跑即可。
+
+### 并行任务互相等待
+
+上游按 `session_id` 串行化同一会话。需要真并行时，给每个 `stata_run_file` / `stata_run_selection`
+传不同的 `session_id`；`stata_session(action="list")` 可以看当前会话。
 
 ### 开着代理就一定 502？
 

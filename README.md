@@ -63,12 +63,13 @@ python3 install.py status | verify | doctor | privacy | uninstall
 
 | 命令 | 作用 |
 |---|---|
-| `install` | 获取源码（可跳过）、建私有 venv、记录状态、写启动器、启动服务、打印配置片段 |
-| `config` | 打印 / 落盘（`--emit`）/ 合并（`--write-config`）MCP 配置片段；支持 `--transport stdio|http`、`--root mcpServers|mcp.servers`、`--key` |
-| `start` / `stop` | 后台启动 / 停止本安装记录的服务进程（幂等） |
-| `status` | 安装摘要 + `/health` 健康检查 |
-| `verify` | 端到端自检：经 stdio 桥接跑 `display 1+1` |
-| `doctor` | 环境诊断（Stata 候选、工具链、状态、健康、仅本项目使用的环境变量） |
+| `install` | 获取源码（可跳过）、建私有 venv、记录状态、写启动器、启动引擎+网关、打印配置片段 |
+| `refresh` | 已装实例原地升级：停进程、重拷 `bin/`、更新记录、重启（不 clone、不 pip） |
+| `config` | 打印 / 落盘（`--emit`）/ 合并（`--write-config`）MCP 配置片段；支持 `--transport stdio\|http`、`--root mcpServers\|mcp.servers`、`--key`、`--timeout-ms` |
+| `start` / `stop` | 后台启动 / 停止引擎与网关（幂等） |
+| `status` | 安装摘要 + 网关与引擎健康检查 |
+| `verify` | 端到端自检：经 stdio 桥接跑 `display 1+1` 并调一次 `stata_job_list` |
+| `doctor` | 环境诊断（Stata 候选、工具链、状态、双进程健康、任务目录、仅本项目使用的环境变量） |
 | `privacy` | 打印完整的数据流与文件触碰声明 |
 | `uninstall` | 停止服务并删除运行时（`--purge` 连状态目录一起删） |
 
@@ -100,6 +101,41 @@ python3 install.py config --transport http --port 4001
 把它粘到你所用客户端的配置里即可，客户端名字无关紧要——每个客户端都只是读同一个 JSON 结构。
 细节（dotted root、写盘、备份、非破坏性合并）见 [docs/CONFIG.md](docs/CONFIG.md)。
 
+部分客户端（例如 ZCode）支持给每个 MCP 服务器配置工具调用超时，可显式加进片段：
+
+```bash
+python3 install.py config --transport http --timeout-ms 120000
+```
+
+---
+
+## 长 do 文件与单步记录
+
+上游 `stata_run_file` 是一次阻塞调用，默认 600s；很多客户端还会在 30s 左右直接取消工具调用。
+本部署在客户端与服务端之间加了一层**本地网关**，把长任务变成后台作业：
+
+```text
+客户端 :4001（网关，URL 不变）──> :4002（上游引擎，源码不改）
+```
+
+| 工具 | 用途 |
+|---|---|
+| `stata_run_file` / `stata_run_selection` | 同名兼容。最多等 20s：短脚本直接给结果，长脚本返回 `job_id` |
+| `stata_job_status` | 状态、耗时、当前第几步；`wait_seconds` 最多阻塞 25s |
+| `stata_job_tail` | 取 `offset` 之后的新记录；`mode="steps"` 每条命令 + 输出预览，`mode="full"` 原始日志 |
+| `stata_job_list` / `stata_job_cancel` | 列任务 / 走上游 `/stop_execution` 取消 |
+| `stata_session` | 上游会话管理透传；并行任务需不同 `session_id` |
+
+每一步都会落盘，随时可看：
+
+```bash
+tail -f ~/.stata-mcp/jobs/<job_id>/journal.log
+# [00:00:01.8] STEP 2  . import delimited using data.csv, clear
+# [00:00:12.4] STEP 3  . regress y x1 x2, robust
+```
+
+默认任务超时 6 小时（`install --default-timeout 43200` 可改），删除策略是保留最近 200 个任务 / 7 天。
+
 ---
 
 ## 目录与产物
@@ -111,18 +147,25 @@ python3 install.py config --transport http --port 4001
 ├── state.json           安装记录（路径、端口、解释器；不含任何密钥）
 ├── server/              上游源码检出（仅 clone 时）
 ├── venv/                服务端专用 Python 环境
-├── bin/                 stata-mcp-bridge.py（stdio↔HTTP）、stata-mcp-start.py（启停）、stata-mcp 执行壳
-├── logs/server.log      服务端日志（可能含 Stata 命令输出与路径）
-├── logs/server.console.log  服务端 stdout/stderr
-└── run/server.pid       服务进程号
+├── bin/                 stata-mcp-jobs.py（网关）、stata-mcp-bridge.py（stdio↔HTTP）、
+│                        stata-mcp-start.py（启停）、stata-mcp 执行壳
+├── jobs/<job_id>/       任务日志：records.jsonl、journal.log、meta.json
+├── logs/server.log      引擎日志（可能含 Stata 命令输出与路径）
+├── logs/gateway.log     网关日志（任务启动、引擎错误）
+├── logs/*.console.log   两个进程的 stdout/stderr
+├── run/server.pid       引擎进程号
+└── run/jobs.pid         网关进程号
 ```
 
 四类角色：
 
 ```text
-MCP 客户端 ──stdio──> bin/stata-mcp-bridge.py ──HTTP(127.0.0.1)──> stata_mcp_server.py ──> 本地 Stata
-                                │
-                                └─ 未运行时自动调用 bin/stata-mcp-start.py 拉起（可选，默认开启）
+MCP 客户端 ──stdio──> bin/stata-mcp-bridge.py ──HTTP(127.0.0.1:4001)──> 网关 stata-mcp-jobs.py
+                                                                              │
+                                                                              └──HTTP(127.0.0.1:4002)──> 上游引擎 ──> 本地 Stata
+MCP 客户端 ──HTTP(127.0.0.1:4001)──────────────────────────────────────────────┘
+                                 │
+                                 └─ 未运行时自动调用 bin/stata-mcp-start.py 拉起（可选，默认开启）
 ```
 
 桥接用 `http.client` **直连** 回环端口，永不读取 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`，

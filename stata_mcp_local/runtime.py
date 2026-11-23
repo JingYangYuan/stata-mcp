@@ -26,6 +26,11 @@ from . import paths
 MIN_PYTHON = (3, 9)
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 4001
+# The engine (upstream server) moves one port up; the client-facing port keeps
+# serving MCP so existing client configuration stays valid.
+DEFAULT_ENGINE_PORT = 4002
+DEFAULT_JOB_TIMEOUT = 21600.0  # 6 hours
+DEFAULT_SYNC_WAIT = 20.0
 MCP_PATH = "/mcp-streamable"
 HEALTH_PATH = "/health"
 
@@ -230,7 +235,7 @@ def install_dependencies(venv_python: Path, requirements: Path, choice: PythonCh
 
 
 # ---------------------------------------------------------------------------
-# Server process
+# Process control
 # ---------------------------------------------------------------------------
 def server_argv(
     python: str,
@@ -241,6 +246,7 @@ def server_argv(
     port: int,
     log_file: Path,
 ) -> List[str]:
+    """Argv for the upstream engine (runs on the internal port)."""
     argv = [
         python,
         str(entry),
@@ -256,6 +262,57 @@ def server_argv(
     if stata_edition in ("mp", "se", "be"):
         argv += ["--stata-edition", stata_edition]
     return argv
+
+
+def gateway_argv(
+    layout: paths.Layout,
+    python: str,
+    host: str,
+    port: int,
+) -> List[str]:
+    """Argv for the local gateway (client-facing port)."""
+    return [
+        python,
+        str(layout.gateway_file),
+        "--home",
+        str(layout.home),
+        "--host",
+        host,
+        "--port",
+        str(port),
+        "--log-file",
+        str(layout.gateway_log_file),
+    ]
+
+
+def port_free(host: str, port: int) -> bool:
+    import socket
+
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        probe.bind((host, port))
+        return True
+    except OSError:
+        return False
+    finally:
+        try:
+            probe.close()
+        except OSError:
+            pass
+
+
+def pick_engine_port(host: str, gateway_port: int, preferred: Optional[int] = None) -> int:
+    candidate = int(preferred or (gateway_port + 1))
+    for offset in range(0, 40):
+        port = candidate + offset
+        if port == gateway_port:
+            continue
+        if port_free(host, port):
+            return port
+    raise RuntimeError_(
+        "no free port for the Stata engine near %d; pass a different --port" % candidate
+    )
 
 
 def is_alive(pid: int) -> bool:
@@ -283,6 +340,13 @@ def is_alive(pid: int) -> bool:
 def read_pid(layout: paths.Layout) -> Optional[int]:
     try:
         return int(layout.pid_file.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+
+
+def read_gateway_pid(layout: paths.Layout) -> Optional[int]:
+    try:
+        return int(layout.gateway_pid_file.read_text(encoding="utf-8").strip())
     except (OSError, ValueError):
         return None
 
@@ -315,23 +379,14 @@ def _spawn(argv: List[str], console_log: Path) -> int:
     return process.pid
 
 
-def start(layout: paths.Layout, state: Dict[str, Any], wait: float = 90.0) -> Tuple[bool, str]:
-    layout.ensure()
-    host = state.get("host", DEFAULT_HOST)
-    port = int(state.get("port", DEFAULT_PORT))
+def _engine_port(state: Dict[str, Any]) -> int:
+    try:
+        return int(state.get("engine_port") or (int(state.get("port", DEFAULT_PORT)) + 1))
+    except (TypeError, ValueError):
+        return DEFAULT_ENGINE_PORT
 
-    if health(host, port):
-        pid = read_pid(layout)
-        if pid and is_alive(pid):
-            return True, "already running on %s:%d (pid %d)" % (host, port, pid)
-        # Something answers, but it is not ours: report instead of pretending success.
-        raise RuntimeError_(
-            "another MCP service already answers on %s:%d and it was not started by "
-            "this installation (no pid file at %s).\n"
-            "      Use a free port (`install --port <N>`) or stop that service first."
-            % (host, port, layout.pid_file)
-        )
 
+def _validate_engine_inputs(layout: paths.Layout, state: Dict[str, Any]) -> Tuple[str, str, str]:
     entry = state.get("server_entry")
     python = state.get("python")
     stata_path = state.get("stata_path")
@@ -341,7 +396,23 @@ def start(layout: paths.Layout, state: Dict[str, Any], wait: float = 90.0) -> Tu
         raise RuntimeError_("venv interpreter missing (%s); re-run install" % python)
     if not stata_path:
         raise RuntimeError_("no Stata installation recorded; re-run install with --stata-path")
+    if not layout.gateway_file.is_file():
+        raise RuntimeError_("gateway script missing (%s); re-run install" % layout.gateway_file)
+    return entry, python, stata_path
 
+
+def _start_engine(
+    layout: paths.Layout,
+    state: Dict[str, Any],
+    host: str,
+    engine_port: int,
+    wait: float,
+    entry: str,
+    python: str,
+    stata_path: str,
+) -> int:
+    if health(host, engine_port):
+        return read_pid(layout) or 0
     log_file = Path(state.get("log_file") or layout.log_file)
     argv = server_argv(
         python,
@@ -349,31 +420,89 @@ def start(layout: paths.Layout, state: Dict[str, Any], wait: float = 90.0) -> Tu
         stata_path,
         state.get("stata_edition", "mp"),
         host,
-        port,
+        engine_port,
         log_file,
     )
-    pid = _spawn(argv, layout.log_dir / "server.console.log")
-    layout.pid_file.parent.mkdir(parents=True, exist_ok=True)
-    paths.write_text_atomic(layout.pid_file, "%d\n" % pid, mode=0o600)
+    engine_pid = _spawn(argv, layout.log_dir / "server.console.log")
+    paths.write_text_atomic(layout.pid_file, "%d\n" % engine_pid, mode=0o600)
+    if not wait_healthy(host, engine_port, timeout=wait):
+        detail = _log_tail(log_file)
+        raise RuntimeError_(
+            "engine did not become healthy on %s:%d within %.0fs%s"
+            % (host, engine_port, wait, ("\n" + detail) if detail else "")
+        )
+    return engine_pid
+
+
+def start(layout: paths.Layout, state: Dict[str, Any], wait: float = 90.0) -> Tuple[bool, str]:
+    layout.ensure()
+    host = state.get("host", DEFAULT_HOST)
+    port = int(state.get("port", DEFAULT_PORT))
+    engine_port = _engine_port(state)
+
+    if health(host, port):
+        pid = read_gateway_pid(layout)
+        if pid and is_alive(pid):
+            if health(host, engine_port):
+                return True, "already running on %s:%d (pid %d)" % (host, port, pid)
+            # Gateway survived but the engine is gone: bring the engine back only.
+            entry, python, stata_path = _validate_engine_inputs(layout, state)
+            engine_pid = _start_engine(layout, state, host, engine_port, wait, entry, python, stata_path)
+            return True, "gateway still on %s:%d (pid %d); engine restarted on :%d (pid %s)" % (
+                host,
+                port,
+                pid,
+                engine_port,
+                engine_pid,
+            )
+        # Something answers, but it is not ours: report instead of pretending success.
+        raise RuntimeError_(
+            "another MCP service already answers on %s:%d and it was not started by "
+            "this installation (no pid file at %s).\n"
+            "      Use a free port (`install --port <N>`) or stop that service first."
+            % (host, port, layout.gateway_pid_file)
+        )
+
+    entry, python, stata_path = _validate_engine_inputs(layout, state)
+
+    # 1) engine (internal port)
+    log_file = Path(state.get("log_file") or layout.log_file)
+    engine_pid = _start_engine(layout, state, host, engine_port, wait, entry, python, stata_path)
+
+    # 2) gateway (client-facing port)
+    try:
+        gateway_pid = _spawn(gateway_argv(layout, python, host, port), layout.log_dir / "gateway.console.log")
+    except OSError as exc:
+        raise RuntimeError_("could not start the gateway: %s" % exc)
+    paths.write_text_atomic(layout.gateway_pid_file, "%d\n" % gateway_pid, mode=0o600)
 
     if wait_healthy(host, port, timeout=wait):
         # Logs can contain data paths and Stata output: keep them owner-only.
-        for path in (log_file, layout.log_dir / "server.console.log"):
+        for path in (log_file, layout.log_dir / "server.console.log", layout.gateway_log_file):
             try:
                 os.chmod(str(path), 0o600)
             except OSError:
                 pass
-        return True, "started (pid %d) on %s:%d" % (pid, host, port)
+        return True, "gateway on %s:%d (pid %s), engine on :%d (pid %s)" % (
+            host,
+            port,
+            gateway_pid,
+            engine_port,
+            engine_pid,
+        )
 
-    detail = _log_tail(log_file)
+    detail = _log_tail(layout.gateway_log_file)
+    if not detail:
+        detail = _log_tail(layout.log_dir / "gateway.console.log")
     raise RuntimeError_(
-        "server did not become healthy on %s:%d within %.0fs%s"
+        "gateway did not become healthy on %s:%d within %.0fs%s"
         % (host, port, wait, ("\n" + detail) if detail else "")
     )
 
 
 def _log_tail(log_file: Path, lines: int = 12) -> str:
-    for candidate in (log_file, log_file.parent / "server.console.log"):
+    candidates = (log_file, log_file.parent / "server.console.log", log_file.parent / "gateway.console.log")
+    for candidate in candidates:
         try:
             text = candidate.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -384,20 +513,9 @@ def _log_tail(log_file: Path, lines: int = 12) -> str:
     return ""
 
 
-def stop(layout: paths.Layout, state: Dict[str, Any], timeout: float = 10.0) -> str:
-    host = state.get("host", DEFAULT_HOST)
-    port = int(state.get("port", DEFAULT_PORT))
-    pid = read_pid(layout)
-
+def _stop_pid(pid: Optional[int], pid_file: Path, timeout: float) -> bool:
     if pid is None or not is_alive(pid):
-        if health(host, port):
-            return (
-                "a server is answering on %s:%d but was not started by this "
-                "installation (no pid file); stop it with your process manager"
-                % (host, port)
-            )
-        return "not running"
-
+        return False
     try:
         if os.name == "nt":
             subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -418,30 +536,63 @@ def stop(layout: paths.Layout, state: Dict[str, Any], timeout: float = 10.0) -> 
             pass
 
     try:
-        layout.pid_file.unlink()
+        pid_file.unlink()
     except OSError:
         pass
-    return "stopped (pid %d)" % pid
+    return True
+
+
+def stop(layout: paths.Layout, state: Dict[str, Any], timeout: float = 10.0) -> str:
+    host = state.get("host", DEFAULT_HOST)
+    port = int(state.get("port", DEFAULT_PORT))
+    engine_port = _engine_port(state)
+
+    stopped_gateway = _stop_pid(read_gateway_pid(layout), layout.gateway_pid_file, timeout)
+    stopped_engine = _stop_pid(read_pid(layout), layout.pid_file, timeout)
+
+    if not stopped_gateway and not stopped_engine:
+        if health(host, port) or health(host, engine_port):
+            return (
+                "a server is answering on %s:%d but was not started by this "
+                "installation (no pid file); stop it with your process manager"
+                % (host, port)
+            )
+        return "not running"
+    parts = []
+    if stopped_gateway:
+        parts.append("gateway")
+    if stopped_engine:
+        parts.append("engine")
+    return "stopped (%s)" % ", ".join(parts)
 
 
 def status(layout: paths.Layout, state: Dict[str, Any]) -> Dict[str, Any]:
     host = state.get("host", DEFAULT_HOST)
     port = int(state.get("port", DEFAULT_PORT))
+    engine_port = _engine_port(state)
     info = health(host, port) or {}
-    pid = read_pid(layout)
+    engine = health(host, engine_port) or {}
+    pid = read_gateway_pid(layout)
+    engine_pid = read_pid(layout)
     return {
         "healthy": bool(info),
         "health": info,
         "pid": pid if (pid and is_alive(pid)) else None,
         "host": host,
         "port": port,
+        "engine": {
+            "healthy": bool(engine),
+            "port": engine_port,
+            "pid": engine_pid if (engine_pid and is_alive(engine_pid)) else None,
+            "health": engine,
+        },
     }
 
 
 def write_helper_scripts(layout: paths.Layout, repo_root: Path) -> List[Path]:
-    """Copy the stdlib helper scripts into the state directory's bin/."""
+    """Copy the helper scripts into the state directory's bin/."""
     written: List[Path] = []
-    for name in ("stata-mcp-bridge.py", "stata-mcp-start.py"):
+    for name in ("stata-mcp-bridge.py", "stata-mcp-start.py", "stata-mcp-jobs.py"):
         src = repo_root / "bin" / name
         if not src.is_file():
             raise RuntimeError_("helper script missing from package: %s" % src)
