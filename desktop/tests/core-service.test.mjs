@@ -78,3 +78,19 @@ test("CoreService can lint Stata code via stata_mcp_analysis.py", async () => {
 test("afterPack no-ops cleanly on non-darwin targets", async () => {
   await afterPack({ electronPlatformName: "win32" });
 });
+
+test("renderer HTML contains all 6 tabs and every ID referenced by renderer.mjs", () => {
+  const html = fs.readFileSync(path.join(desktopDir, "app", "renderer", "index.html"), "utf8");
+  const js = fs.readFileSync(path.join(desktopDir, "app", "renderer", "renderer.mjs"), "utf8");
+
+  for (const tab of ["overview", "config", "jobs", "help", "lint", "doctor"]) {
+    assert.ok(html.includes(`id="tab-${tab}"`), `missing tab-${tab}`);
+    assert.ok(html.includes(`data-tab="${tab}"`), `missing data-tab=${tab}`);
+  }
+
+  const ids = [...js.matchAll(/\$\("([A-Za-z0-9_-]+)"\)/g)].map((m) => m[1]);
+  assert.ok(ids.length > 20);
+  for (const id of new Set(ids)) {
+    assert.ok(html.includes(`id="${id}"`), `renderer.mjs references missing DOM id: ${id}`);
+  }
+});

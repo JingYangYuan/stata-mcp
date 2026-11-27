@@ -1,6 +1,8 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("stataMcpDesktop", {
+  platform: process.platform,
+  confirmAction: (opts) => ipcRenderer.invoke("dialog:confirm", opts),
   getOverview: (opts) => ipcRenderer.invoke("app:overview", opts),
   runAction: (action, opts) => ipcRenderer.invoke("app:run-action", action, opts),
   getConfigSnippet: (opts) => ipcRenderer.invoke("app:config-snippet", opts),

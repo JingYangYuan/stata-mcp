@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="system">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -10,271 +10,498 @@
 <body>
   <div class="app-shell">
     <aside class="sidebar">
+      <div class="sidebar-drag-spacer"></div>
       <div class="brand">
         <div class="brand-badge">SM</div>
         <div>
           <div class="brand-title">Stata MCP Studio</div>
-          <div class="brand-sub">v1.2.1 · 17 Tools</div>
+          <div class="brand-sub">v1.2.2 · 17 Tools</div>
         </div>
       </div>
 
-      <nav class="nav">
-        <button class="nav-btn active" data-tab="overview">概览与部署</button>
-        <button class="nav-btn" data-tab="config">客户端与 MCP 工具</button>
-        <button class="nav-btn" data-tab="jobs">作业与报错定位</button>
-        <button class="nav-btn" data-tab="analysis">Help 速查与反循环</button>
-        <button class="nav-btn" data-tab="doctor">环境诊断与日志</button>
+      <nav class="nav" aria-label="主导航">
+        <button class="nav-btn active" data-tab="overview">
+          <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 9.5L10 3l7 6.5V17a1 1 0 0 1-1 1h-4v-5H8v5H4a1 1 0 0 1-1-1V9.5z"/></svg>
+          <span>概览部署</span>
+        </button>
+        <button class="nav-btn" data-tab="config">
+          <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M7 6L3 10l4 4M13 6l4 4-4 4M11 4l-2 12"/></svg>
+          <span>客户端接入</span>
+        </button>
+        <button class="nav-btn" data-tab="jobs">
+          <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="14" height="12" rx="2"/><path d="M7 9h6M7 12h4"/></svg>
+          <span>作业与报错</span>
+        </button>
+        <button class="nav-btn" data-tab="help">
+          <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H16v13H6.5A2.5 2.5 0 0 0 4 18V5.5z"/><path d="M8 7h5M8 10h4"/></svg>
+          <span>Help 速查</span>
+        </button>
+        <button class="nav-btn" data-tab="lint">
+          <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M10 2.5l6 2.5v4.8c0 3.7-2.5 6.8-6 7.7-3.5-.9-6-4-6-7.7V5l6-2.5z"/><path d="M7.5 10.2l1.8 1.8 3.4-3.6"/></svg>
+          <span>反循环体检</span>
+        </button>
+        <button class="nav-btn" data-tab="doctor">
+          <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 13h3l2-6 3 8 2-4h2"/></svg>
+          <span>诊断与日志</span>
+        </button>
       </nav>
 
       <div class="sidebar-footer">
-        <div class="status-pill" id="sidebar-gateway-pill">Gateway: 检查中…</div>
-        <div class="status-pill" id="sidebar-engine-pill">Engine: 检查中…</div>
-        <button class="btn btn-ghost btn-sm" id="btn-open-home">打开状态目录</button>
+        <div class="status-group">
+          <div class="status-dot-row" id="sidebar-gateway-pill">
+            <span class="dot"></span>
+            <span class="dot-label">Gateway :4001</span>
+          </div>
+          <div class="status-dot-row" id="sidebar-engine-pill">
+            <span class="dot"></span>
+            <span class="dot-label">Engine :4002</span>
+          </div>
+        </div>
+
+        <div class="theme-switch" role="group" aria-label="外观主题">
+          <button class="theme-btn" data-theme-choice="light">浅色</button>
+          <button class="theme-btn active" data-theme-choice="system">自动</button>
+          <button class="theme-btn" data-theme-choice="dark">深色</button>
+        </div>
+
+        <button class="btn btn-ghost btn-sm full-width" id="btn-open-home">打开状态目录</button>
       </div>
     </aside>
 
     <main class="main-content">
-      <!-- 1. 概览与部署 -->
+      <div class="main-drag-strip"></div>
+
+      <!-- 1. 概览部署：三步向导式卡片 -->
       <section class="tab-panel active" id="tab-overview">
-        <header class="panel-header">
-          <div>
-            <h1>本地 Stata MCP 运行时</h1>
-            <p>跨平台（macOS / Windows）一键安装、双进程启停、17 个智能体工具网关</p>
-          </div>
-          <div class="header-actions">
-            <button class="btn btn-ghost" id="btn-refresh-overview">刷新状态</button>
-            <button class="btn btn-primary" id="btn-start">启动服务</button>
-            <button class="btn btn-ghost" id="btn-stop">停止服务</button>
-          </div>
-        </header>
+        <div class="workspace-container narrow">
+          <header class="panel-header">
+            <div>
+              <h1>本地 Stata MCP 部署向导</h1>
+              <p>三步完成本地 Stata 探测、异步网关安装与端到端连通自检</p>
+            </div>
+            <div class="header-actions">
+              <span class="pill-badge" id="ov-overall-badge">检查中…</span>
+              <button class="btn btn-ghost" id="btn-refresh-overview">刷新状态</button>
+            </div>
+          </header>
 
-        <div class="cards-grid">
-          <div class="card">
-            <div class="card-label">网关（客户端入口）</div>
-            <div class="card-value" id="ov-gateway-status">—</div>
-            <div class="card-meta" id="ov-gateway-meta">—</div>
-          </div>
-          <div class="card">
-            <div class="card-label">上游引擎（Stata）</div>
-            <div class="card-value" id="ov-engine-status">—</div>
-            <div class="card-meta" id="ov-engine-meta">—</div>
-          </div>
-          <div class="card">
-            <div class="card-label">已探测 Stata</div>
-            <div class="card-value" id="ov-stata-summary">—</div>
-            <div class="card-meta" id="ov-python-meta">—</div>
-          </div>
-          <div class="card">
-            <div class="card-label">状态目录</div>
-            <div class="card-value mono small" id="ov-home-path">—</div>
-            <div class="card-meta" id="ov-jobs-meta">—</div>
-          </div>
-        </div>
-
-        <div class="card form-card">
-          <h2>一键部署 / 升级配置</h2>
-          <div class="form-grid">
-            <label>
-              <span>Stata 安装目录</span>
-              <div class="input-row">
-                <select id="in-stata-select"></select>
-                <input type="text" id="in-stata-path" placeholder="自动探测或手动选择根目录" />
-                <button class="btn btn-ghost" id="btn-pick-stata">浏览…</button>
+          <!-- Step 1 -->
+          <article class="card wizard-card">
+            <div class="wizard-head">
+              <div class="wizard-title-wrap">
+                <span class="step-num">1</span>
+                <div>
+                  <h2>探测 Stata 与基础环境</h2>
+                  <p class="card-sub">自动扫描本机 Stata 安装根目录（支持 Stata 17–19 / StataNow）</p>
+                </div>
               </div>
-            </label>
-            <label>
-              <span>网关端口（引擎自动用 port+1）</span>
-              <input type="number" id="in-port" value="4001" min="1024" max="65530" />
-            </label>
-            <label>
-              <span>默认任务超时（秒）</span>
-              <input type="number" id="in-timeout" value="21600" min="60" />
-            </label>
-            <label>
-              <span>Git 镜像前缀（可选，网络受限时使用）</span>
-              <input type="text" id="in-mirror" placeholder="例如 https://ghfast.top/" />
-            </label>
-          </div>
-          <div class="action-bar">
-            <button class="btn btn-primary" id="btn-install">一键安装 / 重装</button>
-            <button class="btn btn-secondary" id="btn-refresh-bin">原地升级网关脚本 (refresh)</button>
-            <button class="btn btn-ghost" id="btn-verify">端到端自检 (verify)</button>
-            <label class="checkbox-inline">
-              <input type="checkbox" id="chk-reclone" /> 重新克隆上游源码
-            </label>
-          </div>
-        </div>
+              <span class="pill-badge" id="step1-badge">待检测</span>
+            </div>
 
-        <div class="card">
-          <div class="card-header-row">
-            <h2>操作终端输出</h2>
-            <button class="btn btn-ghost btn-sm" id="btn-clear-console">清空</button>
-          </div>
-          <pre class="console-box" id="action-console">等待操作…</pre>
+            <div class="field-stack">
+              <label class="field-label">
+                <span>已发现的 Stata 候选</span>
+                <select id="in-stata-select"></select>
+              </label>
+
+              <label class="field-label">
+                <span>Stata 安装根目录（可手动修改或浏览选择）</span>
+                <div class="input-row">
+                  <input type="text" id="in-stata-path" placeholder="例如 /Applications/StataNow 或 C:\Program Files\Stata18" />
+                  <button class="btn btn-ghost" id="btn-pick-stata">浏览目录…</button>
+                </div>
+              </label>
+            </div>
+
+            <div class="env-chips" id="ov-env-chips">
+              <span class="env-chip" id="chip-python">Python —</span>
+              <span class="env-chip" id="chip-uv">uv —</span>
+              <span class="env-chip" id="chip-git">git —</span>
+              <span class="env-chip mono" id="chip-home">~/.stata-mcp</span>
+            </div>
+          </article>
+
+          <!-- Step 2 -->
+          <article class="card wizard-card">
+            <div class="wizard-head">
+              <div class="wizard-title-wrap">
+                <span class="step-num">2</span>
+                <div>
+                  <h2>安装或升级本地运行时</h2>
+                  <p class="card-sub">将 17 工具网关与私有虚拟环境部署到独立状态目录，不修改其他软件配置</p>
+                </div>
+              </div>
+              <span class="pill-badge" id="step2-badge">未安装</span>
+            </div>
+
+            <div class="action-bar">
+              <button class="btn btn-primary" id="btn-install">一键安装 / 重装</button>
+              <button class="btn btn-secondary" id="btn-refresh-bin">原地升级脚本 (refresh)</button>
+            </div>
+
+            <details class="advanced-panel">
+              <summary>高级选项（端口、默认超时、Git 镜像、重新克隆源码）</summary>
+              <div class="form-grid two-col-eq">
+                <label class="field-label">
+                  <span>网关端口（引擎自动使用 port+1）</span>
+                  <input type="number" id="in-port" value="4001" min="1024" max="65530" />
+                </label>
+                <label class="field-label">
+                  <span>默认长任务超时（秒）</span>
+                  <input type="number" id="in-timeout" value="21600" min="60" />
+                </label>
+                <label class="field-label">
+                  <span>Git 镜像前缀（网络受限时可选）</span>
+                  <input type="text" id="in-mirror" placeholder="例如 https://ghfast.top/" />
+                </label>
+                <label class="checkbox-inline align-end">
+                  <input type="checkbox" id="chk-reclone" />
+                  <span>安装时重新克隆上游服务端源码</span>
+                </label>
+              </div>
+            </details>
+          </article>
+
+          <!-- Step 3 -->
+          <article class="card wizard-card">
+            <div class="wizard-head">
+              <div class="wizard-title-wrap">
+                <span class="step-num">3</span>
+                <div>
+                  <h2>启动服务与端到端自检</h2>
+                  <p class="card-sub">本地双进程（网关 + Stata 引擎）常驻后台，随后运行 `verify` 验证 17 个工具</p>
+                </div>
+              </div>
+              <span class="pill-badge" id="step3-badge">未运行</span>
+            </div>
+
+            <div class="service-tiles">
+              <div class="service-tile">
+                <div class="tile-title">MCP 网关（客户端入口）</div>
+                <div class="tile-status" id="ov-gateway-status">—</div>
+                <div class="tile-meta" id="ov-gateway-meta">—</div>
+              </div>
+              <div class="service-tile">
+                <div class="tile-title">上游 Stata 引擎（内部端口）</div>
+                <div class="tile-status" id="ov-engine-status">—</div>
+                <div class="tile-meta" id="ov-engine-meta">—</div>
+              </div>
+            </div>
+
+            <div class="action-bar">
+              <button class="btn btn-primary" id="btn-start">启动服务</button>
+              <button class="btn btn-ghost" id="btn-stop">停止服务</button>
+              <button class="btn btn-secondary" id="btn-verify">端到端自检 (verify)</button>
+            </div>
+          </article>
+
+          <!-- Collapsible Terminal Drawer -->
+          <details class="card console-drawer" id="console-drawer">
+            <summary class="drawer-summary">
+              <span>操作终端输出</span>
+              <span class="drawer-status" id="console-status-text">就绪</span>
+            </summary>
+            <div class="drawer-toolbar">
+              <button class="btn btn-ghost btn-sm" id="btn-copy-console">复制输出</button>
+              <button class="btn btn-ghost btn-sm" id="btn-clear-console">清空</button>
+            </div>
+            <pre class="console-box" id="action-console">等待操作…</pre>
+          </details>
         </div>
       </section>
 
-      <!-- 2. 客户端配置与 MCP 工具 -->
+      <!-- 2. 客户端接入 -->
       <section class="tab-panel" id="tab-config">
-        <header class="panel-header">
-          <div>
-            <h1>MCP 客户端接入与工具清单</h1>
-            <p>支持任意兼容 `mcpServers` 的客户端（Claude / Cursor / Codex / ZCode / Windsurf 等），默认不擅自改写他人配置</p>
-          </div>
-        </header>
+        <div class="workspace-container">
+          <header class="panel-header">
+            <div>
+              <h1>MCP 客户端接入与工具清单</h1>
+              <p>生成标准 JSON 配置片段粘贴到任意 MCP 客户端，默认不读取或修改其他产品的配置文件</p>
+            </div>
+          </header>
 
-        <div class="card form-card">
-          <h2>生成配置片段</h2>
-          <div class="form-grid four-col">
-            <label>
-              <span>传输模式</span>
-              <select id="cfg-transport">
-                <option value="stdio">stdio（推荐，代理免疫）</option>
-                <option value="http">Streamable HTTP</option>
-              </select>
-            </label>
-            <label>
-              <span>配置根键</span>
-              <input type="text" id="cfg-root" value="mcpServers" />
-            </label>
-            <label>
-              <span>条目名</span>
-              <input type="text" id="cfg-key" value="stata-mcp" />
-            </label>
-            <label>
-              <span>客户端超时 ms（可选）</span>
-              <input type="number" id="cfg-timeout-ms" placeholder="留空或如 120000" />
-            </label>
-          </div>
-          <div class="action-bar">
-            <button class="btn btn-primary" id="btn-gen-config">刷新片段</button>
-            <button class="btn btn-secondary" id="btn-copy-config">复制 JSON 片段</button>
-          </div>
-          <pre class="code-box" id="cfg-snippet-box">{}</pre>
+          <div class="config-split">
+            <div class="card">
+              <h2>配置参数</h2>
+              <div class="field-stack">
+                <div class="field-label">
+                  <span>传输模式</span>
+                  <div class="segmented" id="cfg-transport-seg">
+                    <button type="button" class="seg-btn active" data-transport="stdio">stdio（推荐 · 代理免疫）</button>
+                    <button type="button" class="seg-btn" data-transport="http">Streamable HTTP</button>
+                  </div>
+                </div>
 
-          <div class="divider"></div>
-          <h3>可选：安全合并写入指定 JSON 配置文件</h3>
-          <div class="input-row">
-            <input type="text" id="cfg-target-file" placeholder="选择客户端 JSON 配置文件路径" />
-            <button class="btn btn-ghost" id="btn-pick-config">选择文件…</button>
-            <button class="btn btn-ghost" id="btn-write-config-dry">预演 (Dry Run)</button>
-            <button class="btn btn-primary" id="btn-write-config">备份并写入</button>
-          </div>
-          <div class="hint-text" id="cfg-write-result"></div>
-        </div>
+                <div class="form-grid two-col-eq">
+                  <label class="field-label">
+                    <span>配置根键</span>
+                    <input type="text" id="cfg-root" value="mcpServers" />
+                  </label>
+                  <label class="field-label">
+                    <span>服务器条目名</span>
+                    <input type="text" id="cfg-key" value="stata-mcp" />
+                  </label>
+                </div>
 
-        <div class="card">
-          <h2>网关提供的 17 个 MCP 工具</h2>
-          <div class="tools-grid" id="tools-catalog"></div>
+                <label class="field-label">
+                  <span>客户端工具超时 ms（可选，如 120000）</span>
+                  <input type="number" id="cfg-timeout-ms" placeholder="留空则不注入 timeoutMs" />
+                </label>
+
+                <div class="action-bar">
+                  <button class="btn btn-primary" id="btn-gen-config">刷新片段</button>
+                </div>
+              </div>
+
+              <details class="advanced-panel">
+                <summary>可选：安全合并写入已有 JSON 配置文件</summary>
+                <div class="field-stack">
+                  <div class="input-row">
+                    <input type="text" id="cfg-target-file" placeholder="选择目标 JSON 配置文件路径" />
+                    <button class="btn btn-ghost" id="btn-pick-config">选择文件…</button>
+                  </div>
+                  <div class="action-bar">
+                    <button class="btn btn-ghost" id="btn-write-config-dry">预演 (Dry Run)</button>
+                    <button class="btn btn-secondary" id="btn-write-config">自动备份并合并写入</button>
+                  </div>
+                  <div class="hint-text" id="cfg-write-result"></div>
+                </div>
+              </details>
+            </div>
+
+            <div class="card json-preview-card">
+              <div class="card-header-row">
+                <h2>实时配置片段</h2>
+                <button class="btn btn-primary btn-sm" id="btn-copy-config">复制 JSON</button>
+              </div>
+              <pre class="code-box tall-code" id="cfg-snippet-box">{}</pre>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header-row wrap">
+              <div>
+                <h2>网关提供的 17 个 MCP 工具</h2>
+                <p class="card-sub">覆盖长任务异步执行、Help 离线速查、精确报错定位、破除循环与内存数据探查</p>
+              </div>
+              <input type="text" class="search-inline" id="tools-filter-input" placeholder="过滤工具名或说明…" />
+            </div>
+            <div class="pill-bar" id="tools-cat-pills"></div>
+            <div class="tools-grid" id="tools-catalog"></div>
+          </div>
         </div>
       </section>
 
-      <!-- 3. 作业与报错定位 -->
+      <!-- 3. 作业与报错 -->
       <section class="tab-panel" id="tab-jobs">
-        <header class="panel-header">
-          <div>
-            <h1>异步作业与精确报错行定位</h1>
-            <p>实时记录每一步 Stata 命令日志；遇到 `r(NNN)` 错误自动映射回原 `.do` 文件行号与上下文</p>
-          </div>
-          <div class="header-actions">
-            <button class="btn btn-ghost" id="btn-reload-jobs">刷新作业列表</button>
-          </div>
-        </header>
-
-        <div class="split-layout">
-          <div class="card jobs-list-card">
-            <h2>最近作业</h2>
-            <div class="jobs-list" id="jobs-list">暂无作业记录</div>
-          </div>
-          <div class="card job-detail-card">
-            <div class="card-header-row">
-              <h2 id="job-detail-title">选择一个作业查看详情</h2>
-              <button class="btn btn-ghost btn-sm" id="btn-cancel-job" disabled>停止当前作业</button>
+        <div class="workspace-container full-height">
+          <header class="panel-header">
+            <div>
+              <h1>异步作业与精确报错定位</h1>
+              <p>每一步 Stata 命令实时落盘，失败时自动映射回原 `.do` 文件行号与上下文</p>
             </div>
-            <div id="job-diagnosis-box" class="diagnosis-box hidden"></div>
-            <h3>执行日志 (journal.log)</h3>
-            <pre class="console-box tall" id="job-journal-box">—</pre>
+            <div class="header-actions">
+              <button class="btn btn-ghost" id="btn-reload-jobs">刷新作业</button>
+            </div>
+          </header>
+
+          <div class="master-detail">
+            <div class="card jobs-sidebar-card">
+              <div class="card-header-row">
+                <h2>最近作业</h2>
+                <div class="segmented compact" id="jobs-filter-seg">
+                  <button type="button" class="seg-btn active" data-job-filter="all">全部</button>
+                  <button type="button" class="seg-btn" data-job-filter="failed">仅失败</button>
+                </div>
+              </div>
+              <div class="jobs-list" id="jobs-list">暂无作业记录</div>
+            </div>
+
+            <div class="card job-detail-card">
+              <div class="card-header-row">
+                <div>
+                  <h2 id="job-detail-title">选择一个作业查看详情</h2>
+                  <div class="card-sub" id="job-detail-sub">—</div>
+                </div>
+                <div class="header-actions">
+                  <button class="btn btn-ghost btn-sm" id="btn-copy-journal">复制日志</button>
+                  <button class="btn btn-danger btn-sm" id="btn-cancel-job" disabled>停止作业</button>
+                </div>
+              </div>
+
+              <div id="job-diagnosis-box" class="diagnosis-box hidden"></div>
+
+              <div class="section-subhead">执行日志 (journal.log)</div>
+              <pre class="console-box flex-grow" id="job-journal-box">从左侧选择一个作业以查看单步日志与错误定位。</pre>
+            </div>
           </div>
         </div>
       </section>
 
-      <!-- 4. Help 速查与反循环体检 -->
-      <section class="tab-panel" id="tab-analysis">
-        <header class="panel-header">
-          <div>
-            <h1>Stata Help 速查 & 反循环代码体检</h1>
-            <p>离线读取本机 Stata 官方与 SSC `.sthlp` 帮助文件；静态拦截 AI 偏爱的低效 `1/_N` / `levelsof` 循环并给出向量化改写</p>
-          </div>
-        </header>
-
-        <div class="two-col">
-          <div class="card">
-            <h2>Help 命令参考</h2>
-            <div class="input-row">
-              <input type="text" id="help-topic-input" placeholder="输入命令或缩写，如 reg / reghdfe / egen" value="regress" />
-              <select id="help-section-select">
-                <option value="">全部章节</option>
-                <option value="syntax">Syntax</option>
-                <option value="options">Options</option>
-                <option value="description">Description</option>
-                <option value="examples">Examples</option>
-                <option value="results">Stored results</option>
-              </select>
-              <button class="btn btn-primary" id="btn-lookup-help">查询</button>
-              <button class="btn btn-ghost" id="btn-search-help">搜索</button>
+      <!-- 4. Help 速查 -->
+      <section class="tab-panel" id="tab-help">
+        <div class="workspace-container">
+          <header class="panel-header">
+            <div>
+              <h1>Stata Help 离线速查</h1>
+              <p>直接读取本机 Stata 与 SSC 的 `.sthlp` 文档，自动解析缩写别名与 SMCL 排版</p>
             </div>
-            <div class="meta-bar" id="help-meta-bar"></div>
-            <pre class="console-box tall" id="help-output-box">输入命令并点击“查询”</pre>
-          </div>
+          </header>
 
           <div class="card">
-            <h2>反循环体检 & 向量化改写建议</h2>
             <div class="input-row">
-              <input type="text" id="lint-file-input" placeholder="可选：选择 .do 文件路径，或直接在下方粘贴代码" />
-              <button class="btn btn-ghost" id="btn-pick-do">选择 .do…</button>
-              <button class="btn btn-primary" id="btn-run-lint">运行体检</button>
-              <button class="btn btn-secondary" id="btn-show-recipes">向量化速查表</button>
+              <input type="text" id="help-topic-input" placeholder="输入命令或关键词（支持别名如 reg / sum / tab），按 Enter 查询" value="regress" />
+              <button class="btn btn-primary" id="btn-lookup-help">查询文档</button>
+              <button class="btn btn-ghost" id="btn-search-help">模糊搜索</button>
             </div>
-            <textarea id="lint-code-input" class="code-input" rows="8" placeholder="在此粘贴 Stata 代码进行反循环与常见陷阱检测…">levelsof industry, local(inds)
+
+            <div class="quick-chips" id="help-quick-chips">
+              <span class="chips-label">常用：</span>
+              <button type="button" class="chip-btn" data-topic="regress">regress</button>
+              <button type="button" class="chip-btn" data-topic="reghdfe">reghdfe</button>
+              <button type="button" class="chip-btn" data-topic="egen">egen</button>
+              <button type="button" class="chip-btn" data-topic="xtreg">xtreg</button>
+              <button type="button" class="chip-btn" data-topic="collapse">collapse</button>
+              <button type="button" class="chip-btn" data-topic="merge">merge</button>
+              <button type="button" class="chip-btn" data-topic="frames">frames</button>
+              <button type="button" class="chip-btn" data-topic="rename_group">rename_group</button>
+            </div>
+
+            <div class="pill-bar" id="help-section-pills">
+              <button type="button" class="pill-btn active" data-section="">全部章节</button>
+              <button type="button" class="pill-btn" data-section="syntax">Syntax</button>
+              <button type="button" class="pill-btn" data-section="options">Options</button>
+              <button type="button" class="pill-btn" data-section="description">Description</button>
+              <button type="button" class="pill-btn" data-section="examples">Examples</button>
+              <button type="button" class="pill-btn" data-section="results">Stored results</button>
+            </div>
+          </div>
+
+          <div class="card help-reader-card">
+            <div class="card-header-row wrap">
+              <div class="meta-bar" id="help-meta-bar">输入命令并点击“查询文档”</div>
+              <button class="btn btn-ghost btn-sm" id="btn-copy-help">复制文档</button>
+            </div>
+            <div class="quick-chips hidden" id="help-also-see"></div>
+            <pre class="console-box reader-box" id="help-output-box">输入命令并点击“查询文档”</pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- 5. 反循环体检 -->
+      <section class="tab-panel" id="tab-lint">
+        <div class="workspace-container">
+          <header class="panel-header">
+            <div>
+              <h1>反循环体检与向量化改写</h1>
+              <p>拦截 `1/_N`、`levelsof + foreach`、`preserve` 循环等低效模式，提供地道向量化方案</p>
+            </div>
+            <div class="segmented" id="lint-mode-seg">
+              <button type="button" class="seg-btn active" data-lint-mode="check">代码 / 文件体检</button>
+              <button type="button" class="seg-btn" data-lint-mode="recipes">11 套向量化速查表</button>
+            </div>
+          </header>
+
+          <div id="lint-view-check" class="view-stack">
+            <div class="card">
+              <div class="input-row">
+                <input type="text" id="lint-file-input" placeholder="可选：选择本地 .do 文件路径（留空则检查下方代码框）" />
+                <button class="btn btn-ghost" id="btn-pick-do">选择 .do…</button>
+                <button class="btn btn-ghost" id="btn-clear-do">清除路径</button>
+              </div>
+              <textarea id="lint-code-input" class="code-input" rows="9" placeholder="在此粘贴 Stata 代码进行反循环与常见陷阱检测…">levelsof industry, local(inds)
 foreach g of local inds {
     summarize sales if industry == `g'
     replace ind_mean = r(mean) if industry == `g'
 }
 keep if sales > 0</textarea>
-            <div id="lint-result-box" class="lint-results">点击“运行体检”查看诊断与向量化改写方案</div>
+              <div class="action-bar between">
+                <div class="left-group">
+                  <label class="checkbox-inline">
+                    <input type="checkbox" id="chk-lint-strict" /> 严格模式（含规格循环提示与 merge 检查）
+                  </label>
+                  <button class="btn btn-ghost btn-sm" id="btn-load-sample">恢复示例</button>
+                </div>
+                <button class="btn btn-primary" id="btn-run-lint">开始体检</button>
+              </div>
+            </div>
+
+            <div class="card">
+              <h2>体检报告与改写建议</h2>
+              <div id="lint-score-banner" class="score-banner hidden"></div>
+              <div id="lint-result-box" class="lint-results">点击“开始体检”查看代码评分、定位行号与向量化改写示例</div>
+            </div>
+          </div>
+
+          <div id="lint-view-recipes" class="view-stack hidden">
+            <div class="card">
+              <div class="card-header-row">
+                <h2>11 类 Stata 向量化替代方案</h2>
+                <input type="text" class="search-inline" id="recipe-filter-input" placeholder="过滤场景（如 分组 / 滞后 / frame）…" />
+              </div>
+              <div id="recipes-grid" class="recipes-stack"></div>
+            </div>
           </div>
         </div>
       </section>
 
-      <!-- 5. 诊断与日志 -->
+      <!-- 6. 诊断与日志 -->
       <section class="tab-panel" id="tab-doctor">
-        <header class="panel-header">
-          <div>
-            <h1>环境诊断与运行日志</h1>
-            <p>检查 Stata 发现候选、Python/uv/git 工具链、端口健康状态与最新运行日志</p>
-          </div>
-          <div class="header-actions">
-            <button class="btn btn-ghost" id="btn-reload-logs">刷新日志</button>
-            <button class="btn btn-danger" id="btn-uninstall">卸载运行时</button>
-          </div>
-        </header>
+        <div class="workspace-container">
+          <header class="panel-header">
+            <div>
+              <h1>环境诊断与运行日志</h1>
+              <p>检查本机探测详情、服务进程日志，或安全移除运行时</p>
+            </div>
+            <div class="header-actions">
+              <button class="btn btn-ghost" id="btn-reload-logs">刷新诊断与日志</button>
+              <button class="btn btn-danger" id="btn-uninstall">卸载运行时</button>
+            </div>
+          </header>
 
-        <div class="card">
-          <h2>Doctor 诊断快照</h2>
-          <pre class="code-box" id="doctor-json-box">加载中…</pre>
-        </div>
-
-        <div class="card">
-          <div class="card-header-row">
-            <h2>日志查看器</h2>
-            <select id="log-file-select">
-              <option value="gateway.log">gateway.log（网关日志）</option>
-              <option value="server.log">server.log（引擎日志）</option>
-              <option value="gateway.console.log">gateway.console.log</option>
-              <option value="server.console.log">server.console.log</option>
-            </select>
+          <div class="cards-grid">
+            <div class="card metric-card">
+              <div class="card-label">平台与架构</div>
+              <div class="card-value" id="doc-platform">—</div>
+              <div class="card-meta" id="doc-stata-count">—</div>
+            </div>
+            <div class="card metric-card">
+              <div class="card-label">Python 与工具链</div>
+              <div class="card-value" id="doc-python">—</div>
+              <div class="card-meta" id="doc-tools">—</div>
+            </div>
+            <div class="card metric-card">
+              <div class="card-label">状态目录</div>
+              <div class="card-value mono small" id="doc-home">—</div>
+              <div class="card-meta" id="doc-installed">—</div>
+            </div>
+            <div class="card metric-card">
+              <div class="card-label">作业记录</div>
+              <div class="card-value" id="doc-jobs">—</div>
+              <div class="card-meta" id="doc-problems">—</div>
+            </div>
           </div>
-          <pre class="console-box tall" id="log-tail-box">—</pre>
+
+          <div class="card">
+            <div class="card-header-row wrap">
+              <div class="segmented compact" id="log-tabs-seg">
+                <button type="button" class="seg-btn active" data-log="gateway.log">gateway.log</button>
+                <button type="button" class="seg-btn" data-log="server.log">server.log</button>
+                <button type="button" class="seg-btn" data-log="gateway.console.log">gateway.console</button>
+                <button type="button" class="seg-btn" data-log="server.console.log">server.console</button>
+              </div>
+              <button class="btn btn-ghost btn-sm" id="btn-copy-log-tail">复制当前日志</button>
+            </div>
+            <pre class="console-box reader-box" id="log-tail-box">—</pre>
+          </div>
+
+          <details class="card">
+            <summary class="drawer-summary">
+              <span>完整 Doctor JSON 诊断快照</span>
+              <button type="button" class="btn btn-ghost btn-sm" id="btn-copy-doctor-json">复制 JSON</button>
+            </summary>
+            <pre class="code-box" id="doctor-json-box">加载中…</pre>
+          </details>
         </div>
       </section>
     </main>

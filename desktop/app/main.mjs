@@ -17,13 +17,16 @@ function broadcastLog(payload) {
 
 function createWindow() {
   const iconPath = path.resolve(appDir, "..", "assets", "icon.png");
+  const isMac = process.platform === "darwin";
   mainWindow = new BrowserWindow({
-    width: 1180,
+    width: 1200,
     height: 820,
-    minWidth: 920,
+    minWidth: 960,
     minHeight: 660,
     title: "Stata MCP Studio",
+    backgroundColor: "#f4f6f9",
     icon: iconPath,
+    ...(isMac ? { titleBarStyle: "hiddenInset", trafficLightPosition: { x: 16, y: 16 } } : {}),
     webPreferences: {
       preload: path.join(appDir, "preload.cjs"),
       contextIsolation: true,
@@ -171,4 +174,18 @@ ipcMain.handle("dialog:pick-config-file", async (event) => {
     ],
   });
   return res.canceled ? "" : res.filePaths[0];
+});
+
+ipcMain.handle("dialog:confirm", async (event, opts = {}) => {
+  const parent = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+  const res = await dialog.showMessageBox(parent, {
+    type: opts.type || "warning",
+    title: opts.title || "确认操作",
+    message: opts.message || "确定继续吗？",
+    detail: opts.detail || "",
+    buttons: [opts.confirmLabel || "确认", opts.cancelLabel || "取消"],
+    defaultId: 1,
+    cancelId: 1,
+  });
+  return res.response === 0;
 });
