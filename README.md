@@ -178,7 +178,7 @@ tail -f ~/.stata-mcp/jobs/<job_id>/journal.log
 - **作业与精确报错定位**：直读 `journal.log` 与 `error.json`，高亮报错行上下文；
 - **Help 速查与反循环体检**：离线读取本机 `.sthlp`，交互式检测 `.do` 循环并对照向量化改写。
 
-GitHub Actions（`.github/workflows/build-desktop.yml`）会在推送到 `main` 或打 `v*` tag 时自动构建 Windows NSIS/zip 与 macOS arm64/x64 dmg/zip 安装包。
+GitHub Actions（`.github/workflows/build-desktop.yml`）会在推送到 `main` 或打 `v*` tag 时自动构建 Windows NSIS/zip 与 macOS arm64/x64 dmg/zip 安装包（macOS 打包阶段自动执行 ad-hoc 深度签名；若浏览器下载触发 Gatekeeper 隔离提示，拖入「应用程序」后执行一次 `xattr -cr "/Applications/Stata MCP Studio.app"` 即可打开）。
 
 ```bash
 # 本地开发 / 打包测试

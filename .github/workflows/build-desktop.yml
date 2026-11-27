@@ -89,7 +89,15 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           name: Stata MCP Studio ${{ github.ref_name }}
-          body: Cross-platform Stata MCP Studio installers (Windows x64, macOS arm64 & x64).
+          body: |
+            Cross-platform **Stata MCP Studio** installers (Windows x64, macOS Apple Silicon `arm64`, macOS Intel `x64`).
+
+            ### macOS First-Launch Tip
+            The `.dmg` / `.zip` bundles use ad-hoc deep code signing (`codesign --deep --sign -`). If macOS Gatekeeper blocks a browser-downloaded copy with a quarantine warning, run once after moving it to `/Applications`:
+
+            ```bash
+            xattr -cr "/Applications/Stata MCP Studio.app"
+            ```
           draft: false
           prerelease: false
           files: release-assets/*

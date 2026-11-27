@@ -11,6 +11,10 @@ import {
   findPythonCommand,
   resolveCoreRoot,
 } from "../app/core-service.mjs";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const afterPack = require("../scripts/after-pack.cjs");
 
 const testsDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopDir = path.resolve(testsDir, "..");
@@ -69,4 +73,8 @@ test("CoreService can lint Stata code via stata_mcp_analysis.py", async () => {
   });
   assert.equal(res.anti_loop_count, 1);
   assert.ok(res.issues.some((i) => i.rule_id === "ANTI_LOOP_OBS_INDEX"));
+});
+
+test("afterPack no-ops cleanly on non-darwin targets", async () => {
+  await afterPack({ electronPlatformName: "win32" });
 });
