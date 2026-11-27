@@ -10,6 +10,7 @@ export function buildAugmentedEnv({
   homeDir = os.homedir(),
 } = {}) {
   const next = { ...env };
+  const p = platform === "win32" ? path.win32 : path.posix;
   const sep = platform === "win32" ? ";" : ":";
   const currentPath = next.PATH || next.Path || "";
   const parts = currentPath ? currentPath.split(sep).filter(Boolean) : [];
@@ -19,24 +20,24 @@ export function buildAugmentedEnv({
     extras.push(
       "/opt/homebrew/bin",
       "/usr/local/bin",
-      path.join(homeDir, ".local", "bin"),
-      path.join(homeDir, ".cargo", "bin"),
+      p.join(homeDir, ".local", "bin"),
+      p.join(homeDir, ".cargo", "bin"),
       "/Library/Frameworks/Python.framework/Versions/Current/bin",
       "/usr/bin",
       "/bin",
     );
   } else if (platform === "win32") {
-    const localApp = env.LOCALAPPDATA || path.join(homeDir, "AppData", "Local");
+    const localApp = env.LOCALAPPDATA || p.join(homeDir, "AppData", "Local");
     extras.push(
-      path.join(homeDir, ".local", "bin"),
-      path.join(localApp, "Programs", "Python", "Python313"),
-      path.join(localApp, "Programs", "Python", "Python312"),
-      path.join(localApp, "Programs", "Python", "Python311"),
-      path.join(localApp, "Programs", "Python", "Python310"),
-      path.join(localApp, "Programs", "Python", "Python39"),
+      p.join(homeDir, ".local", "bin"),
+      p.join(localApp, "Programs", "Python", "Python313"),
+      p.join(localApp, "Programs", "Python", "Python312"),
+      p.join(localApp, "Programs", "Python", "Python311"),
+      p.join(localApp, "Programs", "Python", "Python310"),
+      p.join(localApp, "Programs", "Python", "Python39"),
     );
   } else {
-    extras.push("/usr/local/bin", path.join(homeDir, ".local", "bin"));
+    extras.push("/usr/local/bin", p.join(homeDir, ".local", "bin"));
   }
 
   const merged = [];
@@ -85,20 +86,21 @@ export function findPythonCommand({
     }
   }
 
+  const p = platform === "win32" ? path.win32 : path.posix;
   if (platform === "win32") {
-    const venvPy = path.join(stateHome, "venv", "Scripts", "python.exe");
+    const venvPy = p.join(stateHome, "venv", "Scripts", "python.exe");
     if (existsSync(venvPy)) return { cmd: venvPy, argsPrefix: [] };
-    const localApp = env.LOCALAPPDATA || path.join(homeDir, "AppData", "Local");
+    const localApp = env.LOCALAPPDATA || p.join(homeDir, "AppData", "Local");
     for (const ver of ["313", "312", "311", "310", "39"]) {
-      const p1 = path.join(localApp, "Programs", "Python", `Python${ver}`, "python.exe");
+      const p1 = p.join(localApp, "Programs", "Python", `Python${ver}`, "python.exe");
       if (existsSync(p1)) return { cmd: p1, argsPrefix: [] };
-      const p2 = path.join("C:\\", `Python${ver}`, "python.exe");
+      const p2 = p.join("C:\\", `Python${ver}`, "python.exe");
       if (existsSync(p2)) return { cmd: p2, argsPrefix: [] };
     }
     return { cmd: "python", argsPrefix: [] };
   }
 
-  const venvPy = path.join(stateHome, "venv", "bin", "python");
+  const venvPy = p.join(stateHome, "venv", "bin", "python");
   if (existsSync(venvPy)) return { cmd: venvPy, argsPrefix: [] };
   for (const cand of [
     "/opt/homebrew/bin/python3",
