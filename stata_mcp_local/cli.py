@@ -398,10 +398,25 @@ def cmd_stop(args: argparse.Namespace) -> int:
 def cmd_status(args: argparse.Namespace) -> int:
     layout = _layout(args)
     state = layout.load_state()
+    info = runtime.status(layout, state)
+    if getattr(args, "json", False):
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "installed": layout.exists(),
+                    "home": str(layout.home),
+                    "state": state,
+                    "runtime": info,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n"
+        )
+        return 0 if info["healthy"] else 1
     ui.step("Installation")
     for line in _state_summary(state):
         ui.info(line)
-    info = runtime.status(layout, state)
     ui.step("Gateway (client-facing)")
     if info["healthy"]:
         ui.ok(
@@ -429,10 +444,58 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     layout = _layout(args)
     state = layout.load_state()
     problems = 0
+    arch = os.uname().machine if hasattr(os, "uname") else os.environ.get("PROCESSOR_ARCHITECTURE", "unknown")
+    cands = stata.discover(args.stata_path)
+    info = runtime.status(layout, state)
+    jobs = sorted(layout.jobs_dir.glob("*")) if layout.jobs_dir.is_dir() else []
+
+    if not cands:
+        problems += 1
+    if not layout.exists():
+        problems += 1
+    if not info["healthy"]:
+        problems += 1
+    if not info.get("engine", {}).get("healthy"):
+        problems += 1
+
+    if getattr(args, "json", False):
+        uv_path = shutil.which("uv")
+        git_path = shutil.which("git")
+        payload = {
+            "platform": sys.platform,
+            "arch": arch,
+            "python": {
+                "executable": sys.executable,
+                "version": "%d.%d.%d" % sys.version_info[:3],
+            },
+            "tools": {"git": git_path or "", "uv": uv_path or ""},
+            "stata_candidates": [
+                {
+                    "path": str(c.path),
+                    "edition": c.edition,
+                    "version": c.version,
+                    "source": c.source,
+                    "valid": stata.looks_like_stata(c.path),
+                }
+                for c in cands[:8]
+            ],
+            "installed": layout.exists(),
+            "home": str(layout.home),
+            "state": state,
+            "runtime": info,
+            "jobs_count": len(jobs),
+            "problems": problems,
+            "env": {
+                key: os.environ.get(key, "")
+                for key in ("STATA_MCP_HOME", "STATA_MCP_HOST", "STATA_MCP_PORT", "STATA_MCP_PYTHON", "STATA_MCP_AUTOSTART")
+            },
+        }
+        sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+        return 1 if problems else 0
 
     ui.step("Platform")
     ui.info("os          : %s" % sys.platform)
-    ui.info("architecture: %s" % (os.uname().machine if hasattr(os, "uname") else os.environ.get("PROCESSOR_ARCHITECTURE", "unknown")))
+    ui.info("architecture: %s" % arch)
     ui.info("python      : %s (%d.%d.%d)" % (sys.executable, *sys.version_info[:3]))
 
     ui.step("Tools")
@@ -444,9 +507,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             ui.info("%s: not found (optional)" % tool)
 
     ui.step("Stata candidates (read-only directory inspection)")
-    cands = stata.discover(args.stata_path)
     if not cands:
-        problems += 1
         ui.error("no Stata installation found")
         ui.hint("pass --stata-path <installation root>")
     for cand in cands[:8]:
@@ -460,16 +521,13 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         for line in _state_summary(state):
             ui.info("  " + line)
     else:
-        problems += 1
         ui.warn("not installed in this directory")
 
     ui.step("Runtime")
-    info = runtime.status(layout, state)
     if info["healthy"]:
         ui.ok("gateway healthy on %s:%d" % (info["host"], info["port"]))
         ui.info(json.dumps(info["health"], ensure_ascii=False))
     else:
-        problems += 1
         ui.warn("no healthy gateway on %s:%d" % (info["host"], info["port"]))
         tail = runtime._log_tail(Path(state.get("gateway_log_file") or layout.gateway_log_file))
         if tail:
@@ -480,7 +538,6 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     if engine.get("healthy"):
         ui.ok("engine healthy on %s:%d" % (info["host"], engine["port"]))
     else:
-        problems += 1
         ui.warn("no healthy engine on %s:%d" % (info["host"], engine.get("port")))
         tail = runtime._log_tail(Path(state.get("log_file") or layout.log_file))
         if tail:
@@ -488,7 +545,6 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             ui.info(tail)
 
     ui.info("job timeout: %ss; sync wait: %ss" % (state.get("default_timeout", runtime.DEFAULT_JOB_TIMEOUT), state.get("sync_wait", runtime.DEFAULT_SYNC_WAIT)))
-    jobs = sorted(layout.jobs_dir.glob("*")) if layout.jobs_dir.is_dir() else []
     if jobs:
         size = 0
         for entry in jobs:
@@ -536,17 +592,24 @@ def cmd_verify(args: argparse.Namespace) -> int:
             },
         },
         {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
         {
             "jsonrpc": "2.0",
-            "id": 2,
+            "id": 3,
             "method": "tools/call",
             "params": {"name": "stata_run_selection", "arguments": {"selection": "display 1+1"}},
         },
         {
             "jsonrpc": "2.0",
-            "id": 3,
+            "id": 4,
             "method": "tools/call",
             "params": {"name": "stata_job_list", "arguments": {}},
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "tools/call",
+            "params": {"name": "stata_help", "arguments": {"topic": "regress", "section": "syntax"}},
         },
     ]
     payload = "\n".join(json.dumps(item) for item in requests) + "\n"
@@ -580,12 +643,35 @@ def cmd_verify(args: argparse.Namespace) -> int:
         return 2
 
     ui.ok("received %d JSON-RPC message(s) over stdio" % len(lines))
+    parsed_by_id: Dict[int, Dict[str, Any]] = {}
+    for raw_line in lines:
+        try:
+            obj = json.loads(raw_line)
+            if isinstance(obj, dict) and isinstance(obj.get("id"), int):
+                parsed_by_id[obj["id"]] = obj
+        except ValueError:
+            pass
+
+    tools_list = parsed_by_id.get(2, {}).get("result", {}).get("tools", [])
+    tool_names = {t.get("name") for t in tools_list if isinstance(t, dict)}
+    required_tools = {"stata_help", "stata_diagnose_error", "stata_lint_do", "stata_vectorize_guide", "stata_run_lines"}
+    if len(tool_names) >= 17 and required_tools.issubset(tool_names):
+        ui.ok("gateway exposes %d MCP tools (including help, error locator, anti-loop linter)" % len(tool_names))
+    else:
+        ui.warn("expected >=17 tools including %s; got %d" % (sorted(required_tools), len(tool_names)))
+
     if not errors and "2" in result.stdout:
         ui.ok("Stata computed 1+1 through the bridge")
         if "job_id" in result.stdout or '"jobs"' in result.stdout:
             ui.ok("job tools answered through the gateway")
         else:
             ui.warn("job tools did not answer; check `status` and the gateway log")
+            return 1
+        help_text = json.dumps(parsed_by_id.get(5, {}), ensure_ascii=False)
+        if "regress" in help_text:
+            ui.ok("stata_help returned regress syntax reference")
+        else:
+            ui.warn("stata_help did not return regress syntax")
             return 1
         return 0
     ui.warn("responses received but the expected Stata result was not found")
@@ -788,11 +874,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     status = sub.add_parser("status", help="show installation and health status")
     status.add_argument("--home", metavar="DIR")
+    status.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     status.set_defaults(func=cmd_status)
 
     doctor = sub.add_parser("doctor", help="diagnose the environment")
     doctor.add_argument("--home", metavar="DIR")
     doctor.add_argument("--stata-path", metavar="DIR")
+    doctor.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     doctor.set_defaults(func=cmd_doctor)
 
     verify = sub.add_parser("verify", help="end-to-end smoke test through the stdio bridge")

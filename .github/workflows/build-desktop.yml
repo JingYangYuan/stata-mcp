@@ -1,0 +1,97 @@
+name: Build Desktop (Win & Mac Electron)
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            arch: x64
+            script: package:win
+            artifact: stata-mcp-studio-windows-x64
+          - os: macos-14
+            arch: arm64
+            script: package:mac:arm64
+            artifact: stata-mcp-studio-macos-arm64
+          - os: macos-14
+            arch: x64
+            script: package:mac:x64
+            artifact: stata-mcp-studio-macos-x64
+    runs-on: ${{ matrix.os }}
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run Python tests on target platform
+        run: python -m unittest discover -s tests -v
+
+      - name: Install pnpm
+        run: npm install --global pnpm@11
+
+      - name: Install desktop dependencies
+        run: pnpm --dir desktop install --no-frozen-lockfile
+
+      - name: Run desktop unit tests
+        run: pnpm --dir desktop test
+
+      - name: Package Electron app (${{ matrix.os }} / ${{ matrix.arch }})
+        run: pnpm --dir desktop run ${{ matrix.script }}
+
+      - name: List packaged artifacts
+        shell: bash
+        run: ls -lh desktop/release/
+
+      - name: Upload packaged installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            desktop/release/*.exe
+            desktop/release/*.dmg
+            desktop/release/*.zip
+            desktop/release/*.blockmap
+            desktop/release/latest*.yml
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all packaged installers
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          pattern: stata-mcp-studio-*
+          merge-multiple: true
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Stata MCP Studio ${{ github.ref_name }}
+          body: Cross-platform Stata MCP Studio installers (Windows x64, macOS arm64 & x64).
+          draft: false
+          prerelease: false
+          files: release-assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

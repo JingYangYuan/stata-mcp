@@ -118,13 +118,23 @@ python3 install.py config --transport http --timeout-ms 120000
 客户端 :4001（网关，URL 不变）──> :4002（上游引擎，源码不改）
 ```
 
-| 工具 | 用途 |
-|---|---|
-| `stata_run_file` / `stata_run_selection` | 同名兼容。最多等 20s：短脚本直接给结果，长脚本返回 `job_id` |
-| `stata_job_status` | 状态、耗时、当前第几步；`wait_seconds` 最多阻塞 25s |
-| `stata_job_tail` | 取 `offset` 之后的新记录；`mode="steps"` 每条命令 + 输出预览，`mode="full"` 原始日志 |
-| `stata_job_list` / `stata_job_cancel` | 列任务 / 走上游 `/stop_execution` 取消 |
-| `stata_session` | 上游会话管理透传；并行任务需不同 `session_id` |
+| 工具 | 分类 | 用途 |
+|---|---|---|
+| `stata_run_file` | 执行与作业 | 同名兼容。最多等 20s：短脚本直接给结果，长脚本返回 `job_id`；支持 `lint=True` 预检，出错自带 `[ERROR LOCATION]` |
+| `stata_run_selection` | 执行与作业 | 运行选中代码片段；异步行为同上，出错自带精确行号定位 |
+| `stata_run_lines` | 执行与作业 | 只跑指定 `.do` 的 `[start_line, end_line]` 区间，便于修 bug 后快速复测；报错行号自动映射回原文件 |
+| `stata_job_status` / `stata_job_tail` | 执行与作业 | 查询作业状态（含失败时的 `error_code` / `error_line`）与增量步骤日志 |
+| `stata_job_list` / `stata_job_cancel` | 执行与作业 | 列举近期作业 / 走上游 `/stop_execution` 取消运行中作业 |
+| `stata_session` | 会话管理 | 上游会话管理透传；并行任务需不同 `session_id` |
+| `stata_help` | Help 参考 | 读取本机官方与 SSC `.sthlp` 文档（自动解析 `reg`→`regress` 等别名与 SMCL，支持按章节提取） |
+| `stata_search_help` | Help 参考 | 按关键词检索已安装 Stata/SSC 帮助主题与命令别名 |
+| `stata_which` | Help 参考 | 检查命令是否已安装（built-in 或 `.ado` 路径与版本头） |
+| `stata_diagnose_error` | 报错定位 | 对失败作业（或原始 `.do` + 日志）精准定位 1-based 行号、源码上下文与 `r(NNN)` 修复建议 |
+| `stata_lint_do` | 破除循环 | 静态拦截 `1/_N`、`levelsof+foreach`、`preserve` 循环、嵌套循环、缺失值 `>` 陷阱与括号/引号不配对 |
+| `stata_vectorize_guide` | 破除循环 | 11 类 Stata 向量化替代指南（`bysort`、`egen`、`collapse`、`i.var`、`L./D.`、`frames`、`mata`） |
+| `stata_inspect_data` | 数据探查 | 调用上游 `/view_data` 预览当前内存数据表、行列数与数据类型 |
+| `stata_describe` | 数据探查 | 只读运行 `describe` + `summarize` + `misstable summarize` 核验变量名与缺失情况 |
+| `stata_stored_results` | 数据探查 | 查看内存中的 `e()`、`r()`、`c()` 与 `estimates dir` |
 
 每一步都会落盘，随时可看：
 
@@ -147,14 +157,34 @@ tail -f ~/.stata-mcp/jobs/<job_id>/journal.log
 ├── state.json           安装记录（路径、端口、解释器；不含任何密钥）
 ├── server/              上游源码检出（仅 clone 时）
 ├── venv/                服务端专用 Python 环境
-├── bin/                 stata-mcp-jobs.py（网关）、stata-mcp-bridge.py（stdio↔HTTP）、
-│                        stata-mcp-start.py（启停）、stata-mcp 执行壳
-├── jobs/<job_id>/       任务日志：records.jsonl、journal.log、meta.json
+├── bin/                 stata-mcp-jobs.py（17 工具网关）、stata_mcp_analysis.py（Help/报错定位/反循环）、
+│                        stata-mcp-bridge.py（stdio↔HTTP）、stata-mcp-start.py（启停）、stata-mcp 执行壳
+├── jobs/<job_id>/       任务日志：records.jsonl、journal.log、meta.json、error.json（失败时）
 ├── logs/server.log      引擎日志（可能含 Stata 命令输出与路径）
 ├── logs/gateway.log     网关日志（任务启动、引擎错误）
 ├── logs/*.console.log   两个进程的 stdout/stderr
 ├── run/server.pid       引擎进程号
 └── run/jobs.pid         网关进程号
+```
+
+---
+
+## 桌面客户端（Electron · Stata MCP Studio）
+
+仓库 `desktop/` 提供跨平台（Windows x64 + macOS arm64/x64）的 **Stata MCP Studio** 桌面应用，内嵌全部运行时脚本与文档：
+
+- **一键部署与启停**：自动适配 macOS GUI PATH 与 Windows Python/UTF-8 环境，托盘常驻、实时终端输出；
+- **客户端配置与 17 工具目录**：可视化生成 stdio / HTTP 配置片段并支持 dry-run 安全写入；
+- **作业与精确报错定位**：直读 `journal.log` 与 `error.json`，高亮报错行上下文；
+- **Help 速查与反循环体检**：离线读取本机 `.sthlp`，交互式检测 `.do` 循环并对照向量化改写。
+
+GitHub Actions（`.github/workflows/build-desktop.yml`）会在推送到 `main` 或打 `v*` tag 时自动构建 Windows NSIS/zip 与 macOS arm64/x64 dmg/zip 安装包。
+
+```bash
+# 本地开发 / 打包测试
+pnpm --dir desktop install
+pnpm --dir desktop test
+pnpm --dir desktop run package:mac:arm64   # 或 package:win / package:mac:x64
 ```
 
 四类角色：

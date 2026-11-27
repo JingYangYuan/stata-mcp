@@ -52,6 +52,14 @@ import uuid
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode
 
+_BIN_DIR = os.path.dirname(os.path.abspath(__file__))
+if _BIN_DIR not in sys.path:
+    sys.path.insert(0, _BIN_DIR)
+
+import stata_mcp_analysis  # noqa: E402
+
+GATEWAY_VERSION = "1.2.0"
+TOOLS_COUNT = 17
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 4001
 DEFAULT_ENGINE_PORT = 4002
@@ -126,6 +134,8 @@ class Config(object):
         self.jobs_dir = os.path.join(self.home, "jobs")
         self.selection_dir = os.path.join(self.home, "cache", "selection")
         self.engine_log_file = state.get("log_file") or os.path.join(self.home, "logs", "server.log")
+        self.stata_path = state.get("stata_path") or ""
+        self.version = GATEWAY_VERSION
 
     def describe(self):
         return "gateway=:%d engine=:%d home=%s" % (self.port, self.engine_port, self.home)
@@ -213,6 +223,32 @@ def engine_stop(cfg, session_id, timeout=15.0):
             pass
 
 
+def engine_get_text(cfg, path, timeout=30.0):
+    connection = _engine_connection(cfg, timeout)
+    try:
+        connection.request("GET", path, headers={"Accept": "text/plain, application/json"})
+        response = connection.getresponse()
+        raw = response.read().decode("utf-8", "replace")
+        return response.status, raw
+    except (OSError, http.client.HTTPException) as exc:
+        raise EngineError("cannot reach the Stata engine (%s); %s" % (exc, _engine_hint(cfg)))
+    finally:
+        try:
+            connection.close()
+        except Exception:
+            pass
+
+
+def engine_get_json(cfg, path, timeout=30.0):
+    status, raw = engine_get_text(cfg, path, timeout=timeout)
+    if status >= 400:
+        raise EngineError("engine HTTP %d: %s" % (status, raw[:400]))
+    try:
+        return json.loads(raw)
+    except ValueError:
+        return {"status": "error", "message": raw[:400]}
+
+
 def _unescape_stream_line(text):
     """The engine doubles backslashes so each SSE line stays a single line."""
     return text.replace("\\\\", "\\")
@@ -251,10 +287,22 @@ _ACTIVE_STATUSES = (RUNNING,)
 
 
 class Job(object):
-    def __init__(self, cfg, kind, file_path, working_dir="", session_id="", timeout=None):
+    def __init__(
+        self,
+        cfg,
+        kind,
+        file_path,
+        working_dir="",
+        session_id="",
+        timeout=None,
+        source_file="",
+        line_offset=0,
+    ):
         self.cfg = cfg
         self.kind = kind
         self.file_path = os.path.abspath(os.path.expanduser(file_path))
+        self.source_file = os.path.abspath(os.path.expanduser(source_file)) if source_file else self.file_path
+        self.line_offset = int(line_offset or 0)
         self.working_dir = working_dir or ""
         self.session_id = session_id or ""
         self.timeout = _as_float(timeout, cfg.default_timeout)
@@ -264,12 +312,17 @@ class Job(object):
         self.records_path = os.path.join(self.directory, "records.jsonl")
         self.journal_path = os.path.join(self.directory, "journal.log")
         self.meta_path = os.path.join(self.directory, "meta.json")
+        self.error_path = os.path.join(self.directory, "error.json")
 
         self.status = RUNNING
         self.note = ""
         self.seq = 0
         self.step = 0
         self.current = ""
+        self.error_code = ""
+        self.error_line = None
+        self.error_message = ""
+        self.error_diagnosis = None
         self._ended_at = None
         self._cancel_requested = False
         self._header_open = False
@@ -292,6 +345,8 @@ class Job(object):
             "job_id": self.job_id,
             "kind": self.kind,
             "file_path": self.file_path,
+            "source_file": self.source_file,
+            "line_offset": self.line_offset,
             "working_dir": self.working_dir,
             "session_id": self.session_id,
             "timeout": self.timeout,
@@ -303,6 +358,9 @@ class Job(object):
             "records": self.seq,
             "current": self.current,
             "note": self.note,
+            "error_code": self.error_code,
+            "error_line": self.error_line,
+            "error_message": self.error_message,
             "journal": self.journal_path,
             "records_path": self.records_path,
         }
@@ -358,7 +416,37 @@ class Job(object):
             if should_flush_meta:
                 self._write_meta()
 
+    def _compute_error_diagnosis(self):
+        records = self.read_records()
+        src_text = ""
+        target = self.source_file or self.file_path
+        if target and os.path.isfile(target):
+            try:
+                with open(target, "r", encoding="utf-8", errors="replace") as handle:
+                    src_text = handle.read()
+            except OSError:
+                src_text = ""
+        diag = stata_mcp_analysis.locate_error_in_do(
+            src_text,
+            records,
+            file_path=target,
+            line_offset=self.line_offset,
+        )
+        if not diag:
+            return None
+        try:
+            tmp = self.error_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as handle:
+                json.dump(diag, handle, ensure_ascii=False, indent=1)
+            os.replace(tmp, self.error_path)
+        except OSError:
+            pass
+        return diag
+
     def _finish(self, status, note=""):
+        diag = None
+        if status == FAILED:
+            diag = self._compute_error_diagnosis()
         with self._lock:
             if self.status != RUNNING:
                 return
@@ -367,6 +455,11 @@ class Job(object):
                 status = CANCELLED
             self.status = status
             self.note = note
+            if diag:
+                self.error_diagnosis = diag
+                self.error_code = diag.get("error_code", "")
+                self.error_line = diag.get("line")
+                self.error_message = diag.get("error_message", "")
             self._ended_at = self.elapsed()
         self._write_meta()
 
@@ -442,8 +535,12 @@ class Job(object):
 
             if self.status != RUNNING:
                 return
-            if saw_error:
-                self._finish(FAILED, "the engine reported an error")
+            fatal_err = stata_mcp_analysis.detect_stata_error(self.read_records())
+            if saw_error or fatal_err:
+                note = "the engine reported an error"
+                if fatal_err:
+                    note = "Stata %s: %s" % (fatal_err.get("error_code", ""), fatal_err.get("error_message", ""))
+                self._finish(FAILED, note)
             elif saw_completion:
                 self._finish(FINISHED)
             else:
@@ -526,6 +623,10 @@ class Job(object):
         body = "\n".join(lines)
         if len(body) > MAX_RESULT_CHARS:
             body = "… (earlier output truncated)\n" + body[-MAX_RESULT_CHARS:]
+        if self.error_diagnosis:
+            diag_text = stata_mcp_analysis.format_error_diagnosis(self.error_diagnosis)
+            if diag_text:
+                body = (body + "\n\n" + diag_text).strip()
         return body
 
     def summary(self, wait_seconds=0.0):
@@ -534,11 +635,13 @@ class Job(object):
             while time.time() < deadline and self.status == RUNNING:
                 time.sleep(0.2)
         with self._lock:
-            return {
+            payload = {
                 "job_id": self.job_id,
                 "status": self.status,
                 "kind": self.kind,
                 "file_path": self.file_path,
+                "source_file": self.source_file,
+                "line_offset": self.line_offset,
                 "step": self.step,
                 "records": self.seq,
                 "elapsed": round(self.elapsed(), 1),
@@ -547,6 +650,13 @@ class Job(object):
                 "note": self.note,
                 "journal": self.journal_path,
             }
+            if self.error_code:
+                payload["error_code"] = self.error_code
+            if self.error_line is not None:
+                payload["error_line"] = self.error_line
+            if self.error_message:
+                payload["error_message"] = self.error_message
+            return payload
 
     def wait(self, seconds):
         if seconds <= 0:
@@ -564,6 +674,7 @@ class ReadOnlyJob(object):
         self.directory = directory
         self.records_path = os.path.join(directory, "records.jsonl")
         self.journal_path = os.path.join(directory, "journal.log")
+        self.error_path = os.path.join(directory, "error.json")
         meta_path = os.path.join(directory, "meta.json")
         self._lock = threading.Lock()
         try:
@@ -575,12 +686,24 @@ class ReadOnlyJob(object):
         self.status = self._meta.get("status") or FINISHED
         self.kind = self._meta.get("kind") or "file"
         self.file_path = self._meta.get("file_path") or ""
+        self.source_file = self._meta.get("source_file") or self.file_path
+        self.line_offset = int(self._meta.get("line_offset") or 0)
         self.step = int(self._meta.get("step") or 0)
         self.seq = int(self._meta.get("records") or 0)
         self.current = self._meta.get("current") or ""
         self.note = self._meta.get("note") or ""
+        self.error_code = self._meta.get("error_code") or ""
+        self.error_line = self._meta.get("error_line")
+        self.error_message = self._meta.get("error_message") or ""
         self.started_at = float(self._meta.get("started_at") or time.time())
         self.timeout = float(self._meta.get("timeout") or cfg.default_timeout)
+        self.error_diagnosis = None
+        if os.path.isfile(self.error_path):
+            try:
+                with open(self.error_path, "r", encoding="utf-8") as handle:
+                    self.error_diagnosis = json.load(handle)
+            except (OSError, ValueError):
+                self.error_diagnosis = None
 
     def elapsed(self):
         return max(0.0, time.time() - self.started_at)
@@ -603,11 +726,13 @@ class ReadOnlyJob(object):
         return records
 
     def summary(self, wait_seconds=0.0):
-        return {
+        payload = {
             "job_id": self.job_id,
             "status": self.status,
             "kind": self.kind,
             "file_path": self.file_path,
+            "source_file": self.source_file,
+            "line_offset": self.line_offset,
             "step": self.step,
             "records": len(self.read_records()),
             "elapsed": round(self.elapsed(), 1),
@@ -616,6 +741,13 @@ class ReadOnlyJob(object):
             "note": self.note,
             "journal": self.journal_path,
         }
+        if self.error_code:
+            payload["error_code"] = self.error_code
+        if self.error_line is not None:
+            payload["error_line"] = self.error_line
+        if self.error_message:
+            payload["error_message"] = self.error_message
+        return payload
 
 
 class JobRegistry(object):
@@ -698,8 +830,26 @@ class JobRegistry(object):
                 continue
             shutil.rmtree(directory, ignore_errors=True)
 
-    def start(self, kind, file_path, working_dir="", session_id="", timeout=None):
-        job = Job(self.cfg, kind, file_path, working_dir, session_id, timeout)
+    def start(
+        self,
+        kind,
+        file_path,
+        working_dir="",
+        session_id="",
+        timeout=None,
+        source_file="",
+        line_offset=0,
+    ):
+        job = Job(
+            self.cfg,
+            kind,
+            file_path,
+            working_dir,
+            session_id,
+            timeout,
+            source_file=source_file,
+            line_offset=line_offset,
+        )
         with self._lock:
             self._jobs[job.job_id] = job
         job.start()
@@ -840,6 +990,40 @@ def _wait_hint(job):
     }
 
 
+def _run_quick_selection(jobs, cfg, code, working_dir="", session_id="", timeout=30.0):
+    """Run a short diagnostic Stata snippet through the job runner and wait."""
+    staging = cfg.selection_dir
+    os.makedirs(staging, exist_ok=True)
+    path = os.path.join(staging, "diag-%s.do" % uuid.uuid4().hex[:8])
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(code if code.endswith("\n") else code + "\n")
+    job = jobs.start("selection", path, working_dir, session_id, timeout=timeout)
+    deadline = time.time() + min(max(float(timeout), 2.0), MAX_SYNC_WAIT)
+    while time.time() < deadline and job.status == RUNNING:
+        time.sleep(0.15)
+    return job
+
+
+def _format_table_preview(columns, rows, max_rows=20):
+    if not columns:
+        return "(no columns)"
+    shown = rows[:max_rows]
+    cols = list(columns)
+    header = "| " + " | ".join(str(c) for c in cols) + " |"
+    sep = "| " + " | ".join("---" for _ in cols) + " |"
+    body = []
+    for row in shown:
+        if isinstance(row, dict):
+            vals = [str(row.get(c, "")) for c in cols]
+        elif isinstance(row, (list, tuple)):
+            vals = [str(row[i]) if i < len(row) else "" for i in range(len(cols))]
+        else:
+            vals = [str(row)]
+        vals = [v.replace("\n", " ").replace("|", "\\|")[:60] for v in vals]
+        body.append("| " + " | ".join(vals) + " |")
+    return "\n".join([header, sep] + body)
+
+
 # ---------------------------------------------------------------------------
 # MCP server
 # ---------------------------------------------------------------------------
@@ -849,10 +1033,16 @@ def build_server(cfg):
     mcp = FastMCP(
         name="stata-mcp",
         instructions=(
-            "Local Stata MCP gateway. Long .do files run as background jobs: "
-            "stata_run_file/stata_run_selection return a job_id when the run is still going, "
-            "and stata_job_tail returns the Stata steps recorded since your last offset. "
-            "Poll with stata_job_tail until status is finished/failed/timed_out/cancelled."
+            "Local Stata MCP gateway (17 tools). Best practices:\n"
+            "1. Before writing unfamiliar commands or options, call `stata_help(topic, section)` or "
+            "`stata_search_help(query)` / `stata_which(command)` to verify exact Stata syntax.\n"
+            "2. NEVER write observation-level `1/_N` or `levelsof`+`foreach` loops! Prefer `bysort`, "
+            "`egen`, `collapse`, `i.var`, `L./D.`, `frames`, or `mata`. Call `stata_lint_do` before "
+            "running complex .do files and `stata_vectorize_guide` for idiomatic replacements.\n"
+            "3. Long .do files run asynchronously: `stata_run_file` / `stata_run_lines` / `stata_run_selection` "
+            "return a job_id after 20s; poll with `stata_job_tail(job_id, offset)`.\n"
+            "4. On any error, read `[ERROR LOCATION]` or call `stata_diagnose_error` to jump to the "
+            "exact failing line, fix it, and re-test quickly with `stata_run_lines`."
         ),
         host=cfg.host,
         port=cfg.port,
@@ -870,6 +1060,9 @@ def build_server(cfg):
         return JSONResponse(
             {
                 "status": "ok" if engine else "degraded",
+                "version": cfg.version,
+                "tools_count": TOOLS_COUNT,
+                "stata_path": cfg.stata_path,
                 "gateway": {"port": cfg.port, "pid": os.getpid()},
                 "engine": {
                     "port": cfg.engine_port,
@@ -886,10 +1079,9 @@ def build_server(cfg):
     @mcp.tool(
         name="stata_run_file",
         description=(
-            "Run a Stata .do file. Short files return their output directly; long files keep "
-            "running as a background job and you get a job_id plus the steps recorded so far. "
-            "Then call stata_job_tail(job_id, offset) to follow the run step by step. "
-            "Default timeout is 21600s (6h) unless timeout is given."
+            "Run a Stata .do file. Short files return output directly; long files run as a "
+            "background job returning job_id (follow with stata_job_tail). Failures include exact "
+            "[ERROR LOCATION] line numbers. Pass lint=True to pre-check anti-loop/syntax issues."
         ),
     )
     def stata_run_file(
@@ -898,19 +1090,39 @@ def build_server(cfg):
         working_dir: str = "",
         session_id: str = "",
         wait_seconds: float = -1,
+        lint: bool = False,
     ) -> str:
         target = os.path.abspath(os.path.expanduser(file_path or ""))
         if not target or not os.path.isfile(target):
             return "Error: file not found: %s" % (file_path or "<empty>")
         if not target.lower().endswith(".do"):
             return "Error: %s is not a .do file" % target
+        lint_banner = ""
+        if lint:
+            try:
+                src_text = open(target, "r", encoding="utf-8", errors="replace").read()
+                lint_res = stata_mcp_analysis.lint_do_code(src_text, file_path=target)
+                high_issues = [i for i in lint_res["issues"] if i["severity"] in ("error", "high")]
+                if high_issues:
+                    preview = "\n".join(
+                        "  - L%d [%s] %s: %s (suggestion: %s)"
+                        % (i["line"], i["severity"], i["rule_id"], i["message"], i["suggestion"])
+                        for i in high_issues[:5]
+                    )
+                    lint_banner = "[PRE-RUN LINT WARNINGS (%s)]\n%s\n\n" % (lint_res["summary"], preview)
+            except OSError:
+                pass
         wait = cfg.sync_wait if wait_seconds is None or wait_seconds < 0 else wait_seconds
-        job = jobs.start("file", target, working_dir, session_id, timeout)
+        job = jobs.start("file", target, working_dir, session_id, timeout, source_file=target, line_offset=0)
         job.wait(min(max(wait, 0.0), MAX_SYNC_WAIT))
         if job.status == RUNNING:
-            return _dumps(_wait_hint(job))
+            payload = _wait_hint(job)
+            if lint_banner:
+                payload["lint_warnings"] = lint_banner.strip()
+            return _dumps(payload)
         body = job.result_text()
-        return ">>> %s (job %s, %s in %.1fs)\n%s" % (
+        return "%s>>> %s (job %s, %s in %.1fs)\n%s" % (
+            lint_banner,
             target,
             job.job_id,
             job.status,
@@ -922,7 +1134,7 @@ def build_server(cfg):
         name="stata_run_selection",
         description=(
             "Run a piece of Stata code. Same asynchronous behaviour as stata_run_file: "
-            "long selections return a job_id that you follow with stata_job_tail."
+            "long selections return a job_id that you follow with stata_job_tail. Failures include [ERROR LOCATION]."
         ),
     )
     def stata_run_selection(
@@ -944,7 +1156,7 @@ def build_server(cfg):
         except OSError as exc:
             return "Error: cannot stage the selection: %s" % exc
         wait = cfg.sync_wait if wait_seconds is None or wait_seconds < 0 else wait_seconds
-        job = jobs.start("selection", path, working_dir, session_id, timeout)
+        job = jobs.start("selection", path, working_dir, session_id, timeout, source_file=path, line_offset=0)
         job.wait(min(max(wait, 0.0), MAX_SYNC_WAIT))
         if job.status == RUNNING:
             return _dumps(_wait_hint(job))
@@ -952,10 +1164,75 @@ def build_server(cfg):
         return ">>> selection (job %s, %s in %.1fs)\n%s" % (job.job_id, job.status, job.elapsed(), body)
 
     @mcp.tool(
+        name="stata_run_lines",
+        description=(
+            "Run lines [start_line, end_line] (1-based inclusive) of a .do file. Useful for fast "
+            "iterative debugging after fixing an error; error line numbers map back to the original file."
+        ),
+    )
+    def stata_run_lines(
+        file_path: str,
+        start_line: int,
+        end_line: int,
+        timeout: float = 0,
+        working_dir: str = "",
+        session_id: str = "",
+        wait_seconds: float = -1,
+    ) -> str:
+        target = os.path.abspath(os.path.expanduser(file_path or ""))
+        if not target or not os.path.isfile(target):
+            return "Error: file not found: %s" % (file_path or "<empty>")
+        try:
+            with open(target, "r", encoding="utf-8", errors="replace") as handle:
+                all_lines = handle.read().splitlines()
+        except OSError as exc:
+            return "Error: cannot read %s: %s" % (target, exc)
+        total = len(all_lines)
+        if total == 0:
+            return "Error: %s is empty" % target
+        s_line = int(start_line)
+        e_line = int(end_line)
+        if s_line < 1 or e_line < s_line or s_line > total:
+            return "Error: invalid line range %d..%d for %s (%d lines)" % (s_line, e_line, target, total)
+        e_line = min(e_line, total)
+        snippet = "\n".join(all_lines[s_line - 1 : e_line]) + "\n"
+        staging = cfg.selection_dir
+        os.makedirs(staging, exist_ok=True)
+        staged = os.path.join(staging, "lines-%d-%d-%s.do" % (s_line, e_line, uuid.uuid4().hex[:8]))
+        try:
+            with open(staged, "w", encoding="utf-8") as handle:
+                handle.write(snippet)
+        except OSError as exc:
+            return "Error: cannot stage line slice: %s" % exc
+        wait = cfg.sync_wait if wait_seconds is None or wait_seconds < 0 else wait_seconds
+        job = jobs.start(
+            "lines",
+            staged,
+            working_dir,
+            session_id,
+            timeout,
+            source_file=target,
+            line_offset=s_line - 1,
+        )
+        job.wait(min(max(wait, 0.0), MAX_SYNC_WAIT))
+        if job.status == RUNNING:
+            return _dumps(_wait_hint(job))
+        body = job.result_text()
+        return ">>> %s:%d-%d (job %s, %s in %.1fs)\n%s" % (
+            target,
+            s_line,
+            e_line,
+            job.job_id,
+            job.status,
+            job.elapsed(),
+            body,
+        )
+
+    @mcp.tool(
         name="stata_job_status",
         description=(
             "Status of one Stata job: running/finished/failed/timed_out/cancelled, elapsed time, "
-            "current step and how many log records exist. wait_seconds blocks up to 25s."
+            "current step, error_code/error_line if failed, and log record count. wait_seconds blocks up to 25s."
         ),
     )
     def stata_job_status(job_id: str, wait_seconds: float = 0) -> str:
@@ -982,7 +1259,7 @@ def build_server(cfg):
 
     @mcp.tool(
         name="stata_job_list",
-        description="List recent Stata jobs with their status, step number and elapsed time.",
+        description="List recent Stata jobs with their status, step number, error_line (if failed) and elapsed time.",
     )
     def stata_job_list(limit: int = 20) -> str:
         return _dumps({"jobs": jobs.list(limit=limit)})
@@ -1030,6 +1307,279 @@ def build_server(cfg):
         if payload.get("status") == "success":
             return str(payload.get("result", ""))
         return "Error: %s" % payload.get("message", "unknown engine error")
+
+    @mcp.tool(
+        name="stata_help",
+        description=(
+            "Read official Stata / installed SSC help documentation before writing commands so options and "
+            "syntax are exact. Automatically resolves aliases (e.g. 'reg' -> 'regress'). Use section "
+            "('syntax', 'options', 'examples', 'results', 'description') to retrieve a focused section."
+        ),
+    )
+    def stata_help(topic: str, section: str = "", max_chars: int = 16000) -> str:
+        if not topic or not topic.strip():
+            return "Error: topic is required"
+        local = stata_mcp_analysis.resolve_help(
+            topic,
+            stata_path=cfg.stata_path,
+            section=section,
+            max_chars=max_chars,
+        )
+        if local.get("found"):
+            header = "Help: %s (resolved: %s, source: %s)" % (
+                local["topic"],
+                local["resolved_topic"],
+                local.get("source", "local"),
+            )
+            sections_line = "Sections: " + ", ".join(local.get("sections_available") or [])
+            see_line = ("Also see: " + ", ".join(local["also_see"][:8])) if local.get("also_see") else ""
+            parts = [header, sections_line]
+            if see_line:
+                parts.append(see_line)
+            parts.append("-" * 60)
+            parts.append(local["content"])
+            return "\n".join(parts)
+
+        # Fallback to upstream engine /help endpoint for adopath locations outside standard dirs
+        clean = re.sub(r"\s+", "_", topic.strip().lstrip("#").split(",")[0].strip())
+        if re.match(r"^[A-Za-z0-9_.\-]+$", clean):
+            try:
+                status, body = engine_get_text(cfg, "/help?" + urlencode({"topic": clean, "format": "text"}), timeout=30.0)
+                if status == 200 and body.strip():
+                    limit = max(500, min(int(max_chars or 16000), 60000))
+                    if len(body) > limit:
+                        body = body[:limit] + "\n\n… (truncated)"
+                    return "Help: %s (source: engine /help)\n%s\n%s" % (clean, "-" * 60, body)
+            except EngineError:
+                pass
+        return "Help not found for %r. Try `stata_search_help(query=%r)`." % (topic, topic)
+
+    @mcp.tool(
+        name="stata_search_help",
+        description="Search installed Stata base and SSC/plus help files and command aliases by keyword.",
+    )
+    def stata_search_help(query: str, limit: int = 20) -> str:
+        return _dumps(stata_mcp_analysis.search_help(query, stata_path=cfg.stata_path, limit=limit))
+
+    @mcp.tool(
+        name="stata_which",
+        description=(
+            "Check whether a Stata command (built-in or SSC/ado package) is installed, its file path, "
+            "and its version header."
+        ),
+    )
+    def stata_which(command: str, session_id: str = "") -> str:
+        cmd = (command or "").strip().split()[0] if command else ""
+        if not cmd or not re.match(r"^[A-Za-z0-9_]+$", cmd):
+            return "Error: command must be a valid Stata identifier (letters, digits, underscore)"
+        local = stata_mcp_analysis.which_local(cmd, stata_path=cfg.stata_path)
+        live_output = ""
+        try:
+            job = _run_quick_selection(jobs, cfg, "capture noisily which %s" % cmd, session_id=session_id, timeout=15.0)
+            if job.status != RUNNING:
+                live_output = job.result_text()
+        except Exception:
+            live_output = ""
+        installed = local.get("found") or ("built-in" in live_output.lower()) or (".ado" in live_output.lower())
+        payload = {
+            "command": cmd,
+            "installed": bool(installed),
+            "local_lookup": local,
+            "stata_which_output": live_output,
+        }
+        if not installed:
+            payload["hint"] = "Not installed. Try `ssc install %s` or `search %s`." % (cmd, cmd)
+        return _dumps(payload)
+
+    @mcp.tool(
+        name="stata_diagnose_error",
+        description=(
+            "Pinpoint the exact 1-based line number, source context snippet, error code explanation, and "
+            "fix hint for a failed Stata job (or raw file_path + error_log). Leave job_id empty to inspect "
+            "the most recent failed job."
+        ),
+    )
+    def stata_diagnose_error(job_id: str = "", file_path: str = "", error_log: str = "") -> str:
+        if file_path and error_log:
+            target = os.path.abspath(os.path.expanduser(file_path))
+            src = ""
+            if os.path.isfile(target):
+                try:
+                    with open(target, "r", encoding="utf-8", errors="replace") as handle:
+                        src = handle.read()
+                except OSError:
+                    src = ""
+            diag = stata_mcp_analysis.locate_error_in_do(src, [], file_path=target, error_log=error_log)
+            if not diag:
+                return _dumps({"found": False, "message": "No Stata r(NNN) error found in error_log."})
+            return _dumps({"found": True, "diagnosis": diag, "formatted": stata_mcp_analysis.format_error_diagnosis(diag)})
+
+        job = None
+        if job_id:
+            job = jobs.get(job_id)
+            if job is None:
+                return "Error: unknown job %r" % job_id
+        else:
+            for row in jobs.list(limit=30):
+                if row.get("status") == FAILED:
+                    job = jobs.get(row["job_id"])
+                    break
+            if job is None:
+                recent = jobs.list(limit=1)
+                if recent:
+                    job = jobs.get(recent[0]["job_id"])
+        if job is None:
+            return "Error: no jobs recorded yet"
+
+        diag = getattr(job, "error_diagnosis", None)
+        if diag is None:
+            src_path = getattr(job, "source_file", "") or getattr(job, "file_path", "")
+            src_text = ""
+            if src_path and os.path.isfile(src_path):
+                try:
+                    with open(src_path, "r", encoding="utf-8", errors="replace") as handle:
+                        src_text = handle.read()
+                except OSError:
+                    src_text = ""
+            diag = stata_mcp_analysis.locate_error_in_do(
+                src_text,
+                job.read_records(),
+                file_path=src_path,
+                line_offset=getattr(job, "line_offset", 0),
+            )
+        if not diag:
+            return _dumps({"job_id": job.job_id, "status": job.status, "found": False, "message": "No fatal Stata error detected in this job."})
+        return _dumps(
+            {
+                "job_id": job.job_id,
+                "status": job.status,
+                "found": True,
+                "diagnosis": diag,
+                "formatted": stata_mcp_analysis.format_error_diagnosis(diag),
+            }
+        )
+
+    @mcp.tool(
+        name="stata_lint_do",
+        description=(
+            "Static analyzer to prevent AI from writing slow/unidiomatic Stata loops (1/_N, levelsof+foreach, "
+            "manual dummies, preserve/restore in loops, nested loops) and catch missing-value `>` traps or "
+            "unbalanced braces/quotes. Pass either file_path or code."
+        ),
+    )
+    def stata_lint_do(file_path: str = "", code: str = "", strict: bool = False) -> str:
+        target = ""
+        text = code or ""
+        if file_path:
+            target = os.path.abspath(os.path.expanduser(file_path))
+            if not os.path.isfile(target):
+                return "Error: file not found: %s" % file_path
+            try:
+                with open(target, "r", encoding="utf-8", errors="replace") as handle:
+                    text = handle.read()
+            except OSError as exc:
+                return "Error: cannot read %s: %s" % (target, exc)
+        if not text.strip():
+            return "Error: provide either file_path or non-empty code"
+        return _dumps(stata_mcp_analysis.lint_do_code(text, file_path=target, strict=bool(strict)))
+
+    @mcp.tool(
+        name="stata_vectorize_guide",
+        description=(
+            "Anti-loop vectorization advisor: returns idiomatic Stata alternatives (bysort, egen, collapse, "
+            "i.var, L./D., frames, mata) for slow loop patterns. Pass `code` to auto-detect patterns in your "
+            "script, or `pattern` ('obs_loop', 'group_agg', 'lag_lead_diff', 'rolling_window', 'dummies_interactions', "
+            "'row_stats', 'group_regression', 'recode_inlist', 'bulk_rename', 'frames_not_preserve', 'mata_matrix', 'all')."
+        ),
+    )
+    def stata_vectorize_guide(pattern: str = "", code: str = "") -> str:
+        return _dumps(stata_mcp_analysis.vectorize_guide(pattern=pattern, code=code))
+
+    @mcp.tool(
+        name="stata_inspect_data",
+        description=(
+            "Inspect the dataset currently loaded in Stata memory (rows, columns, dtypes, and sample table) "
+            "with optional Stata `if_condition`."
+        ),
+    )
+    def stata_inspect_data(if_condition: str = "", max_rows: int = 20, session_id: str = "") -> str:
+        limit = max(1, min(int(max_rows or 20), 200))
+        params = {"max_rows": limit}
+        if if_condition and if_condition.strip():
+            params["if_condition"] = if_condition.strip()
+        if session_id and session_id.strip():
+            params["session_id"] = session_id.strip()
+        try:
+            payload = engine_get_json(cfg, "/view_data?" + urlencode(params), timeout=30.0)
+        except EngineError as exc:
+            return "Error: %s" % exc
+        if payload.get("status") != "success":
+            return "Error: %s" % payload.get("message", "could not inspect data")
+        columns = payload.get("columns") or []
+        rows = payload.get("data") or []
+        preview = _format_table_preview(columns, rows, max_rows=limit)
+        return _dumps(
+            {
+                "total_rows": payload.get("total_rows", payload.get("rows", len(rows))),
+                "displayed_rows": len(rows),
+                "columns": columns,
+                "dtypes": payload.get("dtypes", {}),
+                "table_preview": preview,
+            }
+        )
+
+    @mcp.tool(
+        name="stata_describe",
+        description=(
+            "Run read-only `describe`, `summarize` (optional `detail=True`), and `misstable summarize` on the "
+            "dataset in memory (or a specified `varlist`) to verify exact variable names, types, and missingness."
+        ),
+    )
+    def stata_describe(varlist: str = "", detail: bool = False, session_id: str = "") -> str:
+        vl = (varlist or "").strip()
+        if vl and re.search(r'[;\r\n`"$]', vl):
+            return "Error: varlist contains disallowed characters"
+        target_vars = (" " + vl) if vl else ""
+        sum_opt = ", detail" if detail else ""
+        code = "\n".join(
+            [
+                "describe%s" % target_vars,
+                "summarize%s%s" % (target_vars, sum_opt),
+                "capture noisily misstable summarize%s" % target_vars,
+            ]
+        )
+        job = _run_quick_selection(jobs, cfg, code, session_id=session_id, timeout=25.0)
+        if job.status == RUNNING:
+            return _dumps(_wait_hint(job))
+        return job.result_text()
+
+    @mcp.tool(
+        name="stata_stored_results",
+        description=(
+            "Inspect Stata stored results currently in memory: kind='all' | 'e' (estimation) | "
+            "'r' (general) | 'c' (system/dataset metadata) | 'estimates' (saved models)."
+        ),
+    )
+    def stata_stored_results(kind: str = "all", session_id: str = "") -> str:
+        k = (kind or "all").strip().lower()
+        if k not in ("all", "e", "r", "c", "estimates"):
+            return "Error: kind must be one of all, e, r, c, estimates"
+        snippets = []
+        if k in ("all", "e"):
+            snippets.append("capture noisily ereturn list")
+        if k in ("all", "r"):
+            snippets.append("capture noisily return list")
+        if k in ("all", "estimates"):
+            snippets.append("capture noisily estimates dir")
+        if k in ("all", "c"):
+            snippets.append(
+                'display "c(N)=" c(N) "  c(k)=" c(k) "  c(stata_version)=" c(stata_version) '
+                '"  c(pwd)=" `"`c(pwd)\'"\' "  c(filename)=" `"`c(filename)\'"\''
+            )
+        job = _run_quick_selection(jobs, cfg, "\n".join(snippets), session_id=session_id, timeout=20.0)
+        if job.status == RUNNING:
+            return _dumps(_wait_hint(job))
+        return job.result_text()
 
     return mcp
 

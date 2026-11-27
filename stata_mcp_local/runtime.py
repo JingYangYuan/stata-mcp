@@ -592,7 +592,7 @@ def status(layout: paths.Layout, state: Dict[str, Any]) -> Dict[str, Any]:
 def write_helper_scripts(layout: paths.Layout, repo_root: Path) -> List[Path]:
     """Copy the helper scripts into the state directory's bin/."""
     written: List[Path] = []
-    for name in ("stata-mcp-bridge.py", "stata-mcp-start.py", "stata-mcp-jobs.py"):
+    for name in ("stata-mcp-bridge.py", "stata-mcp-start.py", "stata-mcp-jobs.py", "stata_mcp_analysis.py"):
         src = repo_root / "bin" / name
         if not src.is_file():
             raise RuntimeError_("helper script missing from package: %s" % src)

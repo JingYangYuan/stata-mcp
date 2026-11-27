@@ -21,7 +21,10 @@ install.py                     单入口（默认子命令 install）
 bin/
 ├── stata-mcp-bridge.py        stdio ↔ Streamable HTTP 桥（独立、零依赖）
 ├── stata-mcp-start.py         启停器（独立、零依赖、跨平台，管两个进程）
-└── stata-mcp-jobs.py          本地网关 + 异步任务 + 单步日志（用服务端 venv）
+├── stata_mcp_analysis.py      纯标准库分析引擎（Help SMCL、报错行定位、反循环 Linter、向量化指南）
+└── stata-mcp-jobs.py          本地网关（17 个 MCP 工具）+ 异步任务 + 单步日志（用服务端 venv）
+desktop/
+└── Stata MCP Studio           Electron 跨平台桌面端（内嵌 core，Win/Mac Actions 自动打包）
 ```
 
 `bin/` 下前两个脚本**不 import 上面的包**，只读 `<state>/state.json`，因为安装后被复制到状态目录里，

@@ -37,3 +37,8 @@ Thumbs.db
 Desktop.ini
 *.swp
 *~
+
+# Electron desktop build artifacts & staged payload
+desktop/node_modules/
+desktop/release/
+desktop/resources/stata-mcp-core/

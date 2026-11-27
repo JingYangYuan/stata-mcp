@@ -14,8 +14,8 @@
 | `<state>/state.json` | 安装记录：源码路径、入口、解释器、Stata 路径、端口、commit | `install` |
 | `<state>/server/` | 上游源码检出 | 仅在不给 `--server-dir` 时 `git clone` |
 | `<state>/venv/` | 服务端专用 Python 环境 | `install`（`--venv` 时跳过） |
-| `<state>/bin/` | 网关、桥接、启停器、执行壳 | `install` / `refresh` |
-| `<state>/jobs/<job_id>/` | 任务日志：`records.jsonl`、`journal.log`、`meta.json`（**含 Stata 命令与输出**） | 每次运行 do 文件 |
+| `<state>/bin/` | 网关、分析引擎、桥接、启停器、执行壳 | `install` / `refresh` |
+| `<state>/jobs/<job_id>/` | 任务日志：`records.jsonl`、`journal.log`、`meta.json`、`error.json`（**含 Stata 命令与输出**） | 每次运行 do 文件 |
 | `<state>/cache/selection/` | `stata_run_selection` 的临时 do 文件（保留 2 天） | 运行期 |
 | `<state>/logs/server.log` | 引擎日志（**可能含 Stata 命令输出、数据集路径**） | 运行期 |
 | `<state>/logs/gateway.log` | 网关日志（任务启动、引擎错误） | 运行期 |
