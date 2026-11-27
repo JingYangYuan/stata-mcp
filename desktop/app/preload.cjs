@@ -25,4 +25,9 @@ contextBridge.exposeInMainWorld("stataMcpDesktop", {
     ipcRenderer.on("core:log", handler);
     return () => ipcRenderer.removeListener("core:log", handler);
   },
+  onStateChanged: (listener) => {
+    const handler = () => listener();
+    ipcRenderer.on("core:state-changed", handler);
+    return () => ipcRenderer.removeListener("core:state-changed", handler);
+  },
 });

@@ -121,16 +121,22 @@ class Settings(object):
         except (TypeError, ValueError):
             self.timeout = DEFAULT_TIMEOUT
 
-        self.start_cmd = (
-            args.start_cmd
-            or os.environ.get("STATA_MCP_START_CMD")
-            or self._default_start_cmd(state)
+        explicit_cmd = args.start_cmd or os.environ.get("STATA_MCP_START_CMD")
+        self.start_argv = None if explicit_cmd else self._default_start_argv(state)
+        self.start_cmd = explicit_cmd or (
+            " ".join(_quote(part) for part in self.start_argv) if self.start_argv else ""
         )
 
-    def _default_start_cmd(self, state):
+    def _default_start_argv(self, state):
         launcher = state.get("launcher") or os.path.join(self.home, "bin", "stata-mcp-start.py")
         if os.path.isfile(launcher):
-            return "%s %s" % (_quote(sys.executable), _quote(launcher))
+            return [sys.executable, launcher]
+        return None
+
+    def _default_start_cmd(self, state):
+        argv = self._default_start_argv(state)
+        if argv:
+            return "%s %s" % (_quote(argv[0]), _quote(argv[1]))
         return ""
 
     def describe(self):
@@ -166,52 +172,84 @@ def is_healthy(settings, timeout=2.0):
         return False
 
 
+def _win_background_flags(breakaway=True):
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) | getattr(
+        subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200
+    )
+    if breakaway:
+        flags |= getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000)
+    return flags
+
+
 def spawn_autostart(settings):
-    command = settings.start_cmd
+    argv = getattr(settings, "start_argv", None)
+    command = argv if argv else settings.start_cmd
     if not command:
         debug("no start command available; cannot autostart")
-        return False
-    debug("autostart: %s" % command)
+        return None
+    use_shell = not isinstance(command, (list, tuple))
+    debug("autostart: %s" % (command if isinstance(command, str) else " ".join(command)))
     try:
         if os.name == "nt":
-            flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-            subprocess.Popen(
-                command,
-                shell=True,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=flags,
-            )
-        else:
-            subprocess.Popen(
-                command,
-                shell=True,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-        return True
+            try:
+                return subprocess.Popen(
+                    command,
+                    shell=use_shell,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=_win_background_flags(breakaway=True),
+                    close_fds=True,
+                )
+            except OSError as exc:
+                if getattr(exc, "winerror", None) != 5:
+                    raise
+                return subprocess.Popen(
+                    command,
+                    shell=use_shell,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=_win_background_flags(breakaway=False),
+                    close_fds=True,
+                )
+        return subprocess.Popen(
+            command,
+            shell=use_shell,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            close_fds=True,
+        )
     except OSError as exc:
         debug("autostart failed: %s" % exc)
-        return False
+        return None
 
 
 def ensure_server(settings):
-    if is_healthy(settings):
+    if is_healthy(settings, timeout=1.5):
         return True
     if not settings.autostart:
         return False
-    if not spawn_autostart(settings):
+    proc = spawn_autostart(settings)
+    if not proc:
         return False
 
     deadline = time.time() + settings.autostart_timeout
+    exited_at = None
     while time.time() < deadline:
-        time.sleep(0.4)
-        if is_healthy(settings):
+        if is_healthy(settings, timeout=1.5):
             debug("server became healthy")
             return True
+        rc = proc.poll()
+        if rc is not None:
+            if exited_at is None:
+                exited_at = time.time()
+            elif time.time() - exited_at >= 1.5:
+                debug("autostart launcher exited early with code %s" % rc)
+                return False
+        time.sleep(0.4)
     return False
 
 
@@ -372,7 +410,18 @@ def parse_args(argv=None):
     return parser.parse_args(argv)
 
 
+def _configure_stdio():
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+
 def main(argv=None):
+    _configure_stdio()
     args = parse_args(argv)
     settings = Settings(args)
     debug("starting (%s)" % settings.describe())

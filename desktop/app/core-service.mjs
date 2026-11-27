@@ -12,7 +12,17 @@ export function buildAugmentedEnv({
   const next = { ...env };
   const p = platform === "win32" ? path.win32 : path.posix;
   const sep = platform === "win32" ? ";" : ":";
-  const currentPath = next.PATH || next.Path || "";
+  let currentPath = "";
+  if (platform === "win32") {
+    for (const k of Object.keys(next)) {
+      if (k.toLowerCase() === "path") {
+        if (!currentPath && next[k]) currentPath = next[k];
+        delete next[k];
+      }
+    }
+  } else {
+    currentPath = next.PATH || next.Path || "";
+  }
   const parts = currentPath ? currentPath.split(sep).filter(Boolean) : [];
   const extras = [];
 
@@ -187,6 +197,42 @@ export class CoreService {
     }
   }
 
+  _loadAppVersion() {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.resolve(this.coreRoot, "desktop", "package.json"), "utf8"));
+      if (pkg.version) return pkg.version;
+    } catch {
+      // fallback to state or package version
+    }
+    try {
+      const pkg = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+      if (pkg.version) return pkg.version;
+    } catch {
+      return "";
+    }
+    return "";
+  }
+
+  _killChildTree(child) {
+    if (!child) return;
+    if (this.platform === "win32" && child.pid) {
+      try {
+        spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+          windowsHide: true,
+          stdio: "ignore",
+        });
+        return;
+      } catch {
+        // fallback to child.kill()
+      }
+    }
+    try {
+      child.kill();
+    } catch {
+      // ignore
+    }
+  }
+
   _runPython(scriptPath, args, { stream = false, stdinText = null, timeoutMs = 180000 } = {}) {
     const py = findPythonCommand({
       platform: this.platform,
@@ -208,7 +254,9 @@ export class CoreService {
       const timer = setTimeout(() => {
         if (!finished) {
           finished = true;
-          child.kill();
+          this._killChildTree(child);
+          const timeoutMsg = `\n[超时] 命令超过 ${Math.round(timeoutMs / 1000)}s 未结束，已终止。\n`;
+          if (stream) this.emitLog({ stream: "stderr", text: timeoutMsg });
           resolve({ code: -1, stdout, stderr: `${stderr}\nCommand timed out after ${timeoutMs}ms` });
         }
       }, timeoutMs);
@@ -227,6 +275,7 @@ export class CoreService {
         if (finished) return;
         finished = true;
         clearTimeout(timer);
+        if (stream) this.emitLog({ stream: "stderr", text: `\n[启动失败] ${err.message}\n` });
         resolve({ code: -1, stdout, stderr: err.message });
       });
       child.on("close", (code) => {
@@ -268,6 +317,7 @@ export class CoreService {
     }
     return {
       ok: res.code === 0,
+      appVersion: this._loadAppVersion(),
       coreRoot: this.coreRoot,
       stateHome: this.resolveStateHome(),
       doctor,
@@ -304,10 +354,11 @@ export class CoreService {
         if (opts.purge) args.push("--purge");
       }
 
+      const timeoutMs = action === "install" ? 600000 : action === "verify" ? 180000 : 120000;
       this.emitLog({ stream: "meta", text: `\n$ python install.py ${args.join(" ")}\n` });
       const res = await this._runPython(this._installScript(), args, {
         stream: true,
-        timeoutMs: action === "install" ? 600000 : 120000,
+        timeoutMs,
       });
       return { ok: res.code === 0, ...res };
     } finally {

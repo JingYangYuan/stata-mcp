@@ -587,6 +587,11 @@ def cmd_verify(args: argparse.Namespace) -> int:
         return 2
 
     ui.step("End-to-end smoke test via stdio bridge")
+    host = state.get("host", runtime.DEFAULT_HOST)
+    port = int(state.get("port", runtime.DEFAULT_PORT))
+    if not runtime.health(host, port, timeout=1.0):
+        ui.info("runtime not running; bridge will autostart gateway & engine (may take ~15-30s)...")
+
     requests = [
         {
             "jsonrpc": "2.0",
@@ -622,6 +627,9 @@ def cmd_verify(args: argparse.Namespace) -> int:
     payload = "\n".join(json.dumps(item) for item in requests) + "\n"
     env = dict(os.environ)
     env["STATA_MCP_HOME"] = str(layout.home)
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    run_kwargs = {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)} if os.name == "nt" else {}
     try:
         result = subprocess.run(
             [str(python), str(bridge)],
@@ -629,11 +637,18 @@ def cmd_verify(args: argparse.Namespace) -> int:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=float(args.timeout),
             env=env,
+            **run_kwargs,
         )
     except subprocess.TimeoutExpired:
         ui.error("bridge did not finish within %.0fs" % args.timeout)
+        for label, log_path in (("gateway log", layout.gateway_log_file), ("engine log", layout.log_file)):
+            tail = runtime._log_tail(log_path)
+            if tail:
+                ui.info("%s:\n%s" % (label, tail))
         return 2
 
     lines = [line for line in (result.stdout or "").splitlines() if line.strip()]
@@ -642,6 +657,10 @@ def cmd_verify(args: argparse.Namespace) -> int:
         ui.error("bridge exited with code %s" % result.returncode)
         if result.stderr:
             ui.info(result.stderr.strip()[-800:])
+        for label, log_path in (("gateway log", layout.gateway_log_file), ("engine log", layout.log_file)):
+            tail = runtime._log_tail(log_path)
+            if tail:
+                ui.info("%s:\n%s" % (label, tail))
         return 2
     if not lines:
         ui.error("bridge produced no output")

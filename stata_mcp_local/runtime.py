@@ -73,17 +73,23 @@ def http_json(
             pass
 
 
-def health(host: str, port: int, timeout: float = 2.0) -> Optional[Dict[str, Any]]:
+def health(host: str, port: int, timeout: float = 1.5) -> Optional[Dict[str, Any]]:
     return http_json(host, port, HEALTH_PATH, timeout=timeout)
 
 
 def wait_healthy(host: str, port: int, timeout: float = 60.0, interval: float = 0.5) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
-        if health(host, port, timeout=min(2.0, max(0.5, deadline - time.time()))):
+        if health(host, port, timeout=min(1.5, max(0.5, deadline - time.time()))):
             return True
         time.sleep(interval)
     return False
+
+
+def _win_no_window_kwargs() -> Dict[str, Any]:
+    if os.name == "nt":
+        return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)}
+    return {}
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +121,10 @@ def _python_version(executable: str) -> Optional[Tuple[int, int]]:
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
+            **_win_no_window_kwargs(),
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -135,7 +144,14 @@ def _find_uv() -> Tuple[Optional[str], str]:
         return None, ""
     try:
         result = subprocess.run(
-            [exe, "--version"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=30
+            [exe, "--version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            **_win_no_window_kwargs(),
         )
     except (OSError, subprocess.SubprocessError):
         return exe, ""
@@ -189,14 +205,30 @@ def create_venv(venv_dir: Path, choice: PythonChoice) -> Path:
     venv_dir.parent.mkdir(parents=True, exist_ok=True)
     if choice.uv:
         cmd = [choice.uv, "venv", str(venv_dir), "--python", choice.executable]
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            **_win_no_window_kwargs(),
+        )
         if result.returncode != 0 or not target.is_file():
             # fall back to the stdlib builder below
             pass
     if not target.is_file():
         cmd = [choice.executable, "-m", "venv", str(venv_dir)]
         try:
-            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                **_win_no_window_kwargs(),
+            )
         except OSError as exc:
             raise RuntimeError_("could not create virtual environment: %s" % exc)
         if result.returncode != 0:
@@ -225,9 +257,20 @@ def install_dependencies(venv_python: Path, requirements: Path, choice: PythonCh
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            encoding="utf-8",
+            errors="replace",
+            **_win_no_window_kwargs(),
         )
         cmd = [str(venv_python), "-m", "pip", "install", "-r", str(requirements)]
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    result = subprocess.run(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        **_win_no_window_kwargs(),
+    )
     if result.returncode != 0:
         tail = "\n".join((result.stdout or "").strip().splitlines()[-12:])
         raise RuntimeError_("dependency installation failed:\n%s" % tail)
@@ -290,7 +333,11 @@ def port_free(host: str, port: int) -> bool:
 
     probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # On Windows SO_REUSEADDR allows binding a port already held by another listener.
+        if os.name != "nt":
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        elif hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
         probe.bind((host, port))
         return True
     except OSError:
@@ -315,21 +362,56 @@ def pick_engine_port(host: str, gateway_port: int, preferred: Optional[int] = No
     )
 
 
+def _is_alive_win32(pid: int) -> Optional[bool]:
+    """Query Win32 process exit code directly without spawning tasklist."""
+    try:
+        import ctypes
+        import ctypes.wintypes as wt
+
+        k32 = ctypes.windll.kernel32
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        handle = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+        if not handle:
+            err = k32.GetLastError()
+            if err == 5:  # ERROR_ACCESS_DENIED: process exists
+                return True
+            if err == 87:  # ERROR_INVALID_PARAMETER: no such process
+                return False
+            return None
+        try:
+            code = wt.DWORD()
+            if not k32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return None
+            return code.value == STILL_ACTIVE
+        finally:
+            k32.CloseHandle(handle)
+    except Exception:
+        return None
+
+
 def is_alive(pid: int) -> bool:
     if pid <= 0:
         return False
     if os.name == "nt":
+        direct = _is_alive_win32(pid)
+        if direct is not None:
+            return direct
         try:
             result = subprocess.run(
-                ["tasklist", "/FI", "PID eq %d" % pid, "/NH"],
+                ["tasklist", "/FI", "PID eq %d" % pid, "/FO", "CSV", "/NH"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=15,
+                **_win_no_window_kwargs(),
             )
         except (OSError, subprocess.SubprocessError):
             return False
-        return str(pid) in (result.stdout or "")
+        target = '"%d"' % pid
+        return any(target in line for line in (result.stdout or "").splitlines())
     try:
         os.kill(pid, 0)
     except OSError:
@@ -351,31 +433,51 @@ def read_gateway_pid(layout: paths.Layout) -> Optional[int]:
         return None
 
 
+def _win_background_flags(breakaway: bool = True) -> int:
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) | getattr(
+        subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200
+    )
+    if breakaway:
+        flags |= getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000)
+    return flags
+
+
 def _spawn(argv: List[str], console_log: Path) -> int:
     paths.ensure_private_dir(console_log.parent)
     handle = open(str(console_log), "ab")
-    if os.name == "nt":
-        creationflags = 0
-        creationflags |= getattr(subprocess, "DETACHED_PROCESS", 0)
-        creationflags |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-        process = subprocess.Popen(
-            argv,
-            stdin=subprocess.DEVNULL,
-            stdout=handle,
-            stderr=handle,
-            creationflags=creationflags,
-            close_fds=True,
-        )
-    else:
-        process = subprocess.Popen(
-            argv,
-            stdin=subprocess.DEVNULL,
-            stdout=handle,
-            stderr=handle,
-            start_new_session=True,
-            close_fds=True,
-        )
-    handle.close()
+    try:
+        if os.name == "nt":
+            try:
+                process = subprocess.Popen(
+                    argv,
+                    stdin=subprocess.DEVNULL,
+                    stdout=handle,
+                    stderr=handle,
+                    creationflags=_win_background_flags(breakaway=True),
+                    close_fds=True,
+                )
+            except OSError as exc:
+                if getattr(exc, "winerror", None) != 5:
+                    raise
+                process = subprocess.Popen(
+                    argv,
+                    stdin=subprocess.DEVNULL,
+                    stdout=handle,
+                    stderr=handle,
+                    creationflags=_win_background_flags(breakaway=False),
+                    close_fds=True,
+                )
+        else:
+            process = subprocess.Popen(
+                argv,
+                stdin=subprocess.DEVNULL,
+                stdout=handle,
+                stderr=handle,
+                start_new_session=True,
+                close_fds=True,
+            )
+    finally:
+        handle.close()
     return process.pid
 
 
@@ -513,15 +615,21 @@ def _log_tail(log_file: Path, lines: int = 12) -> str:
     return ""
 
 
-def _stop_pid(pid: Optional[int], pid_file: Path, timeout: float) -> bool:
+def _stop_pid(pid: Optional[int], pid_file: Optional[Path], timeout: float) -> bool:
     if pid is None or not is_alive(pid):
         return False
     try:
         if os.name == "nt":
-            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=15,
+                **_win_no_window_kwargs(),
+            )
         else:
             os.kill(pid, signal.SIGTERM)
-    except OSError:
+    except (OSError, subprocess.SubprocessError):
         pass
 
     deadline = time.time() + timeout
@@ -531,15 +639,40 @@ def _stop_pid(pid: Optional[int], pid_file: Path, timeout: float) -> bool:
         time.sleep(0.2)
     else:
         try:
-            os.kill(pid, signal.SIGKILL)
-        except OSError:
+            if os.name == "nt":
+                subprocess.run(
+                    ["taskkill", "/PID", str(pid), "/T", "/F"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=10,
+                    **_win_no_window_kwargs(),
+                )
+            else:
+                sigkill = getattr(signal, "SIGKILL", None)
+                if sigkill is not None:
+                    os.kill(pid, sigkill)
+        except (OSError, subprocess.SubprocessError):
             pass
 
-    try:
-        pid_file.unlink()
-    except OSError:
-        pass
+    if pid_file is not None:
+        try:
+            pid_file.unlink()
+        except OSError:
+            pass
     return True
+
+
+def _health_gateway_pid(info: Optional[Dict[str, Any]]) -> Optional[int]:
+    if not isinstance(info, dict):
+        return None
+    gw = info.get("gateway")
+    if isinstance(gw, dict):
+        try:
+            val = int(gw.get("pid") or 0)
+            return val if val > 0 else None
+        except (TypeError, ValueError):
+            return None
+    return None
 
 
 def stop(layout: paths.Layout, state: Dict[str, Any], timeout: float = 10.0) -> str:
@@ -548,10 +681,15 @@ def stop(layout: paths.Layout, state: Dict[str, Any], timeout: float = 10.0) -> 
     engine_port = _engine_port(state)
 
     stopped_gateway = _stop_pid(read_gateway_pid(layout), layout.gateway_pid_file, timeout)
+    if not stopped_gateway:
+        gw_pid = _health_gateway_pid(health(host, port, timeout=1.0))
+        if gw_pid:
+            stopped_gateway = _stop_pid(gw_pid, layout.gateway_pid_file, timeout)
+
     stopped_engine = _stop_pid(read_pid(layout), layout.pid_file, timeout)
 
     if not stopped_gateway and not stopped_engine:
-        if health(host, port) or health(host, engine_port):
+        if health(host, port, timeout=1.0) or health(host, engine_port, timeout=1.0):
             return (
                 "a server is answering on %s:%d but was not started by this "
                 "installation (no pid file); stop it with your process manager"
@@ -570,9 +708,11 @@ def status(layout: paths.Layout, state: Dict[str, Any]) -> Dict[str, Any]:
     host = state.get("host", DEFAULT_HOST)
     port = int(state.get("port", DEFAULT_PORT))
     engine_port = _engine_port(state)
-    info = health(host, port) or {}
-    engine = health(host, engine_port) or {}
+    info = health(host, port, timeout=1.0) or {}
+    engine = health(host, engine_port, timeout=1.0) or {}
     pid = read_gateway_pid(layout)
+    if not (pid and is_alive(pid)):
+        pid = _health_gateway_pid(info)
     engine_pid = read_pid(layout)
     return {
         "healthy": bool(info),

@@ -37,6 +37,8 @@ const stateUI = {
   logName: "gateway.log",
   allRecipes: [],
   actionRunning: false,
+  userEditedPort: false,
+  userEditedTimeout: false,
 };
 
 function $(id) {
@@ -117,117 +119,165 @@ function appendConsole(text) {
 }
 
 /* ── 1. Overview & 3-Step Wizard ────────────────────────────────────── */
-async function refreshOverview() {
-  const res = await api.getOverview({ stataPath: $("in-stata-path").value.trim() || undefined });
-  const doc = res.doctor || {};
-  const rt = doc.runtime || {};
-  const eng = rt.engine || {};
-  const st = doc.state || {};
-  const cands = doc.stata_candidates || [];
-
-  const gwOk = Boolean(rt.healthy);
-  const engOk = Boolean(eng.healthy);
-  const installed = Boolean(doc.installed);
-
-  // Sidebar live dots
-  $("sidebar-gateway-pill").className = `status-dot-row ${gwOk ? "ok" : "bad"}`;
-  $("sidebar-gateway-pill").querySelector(".dot-label").textContent = `Gateway :${rt.port || 4001}`;
-  $("sidebar-engine-pill").className = `status-dot-row ${engOk ? "ok" : "bad"}`;
-  $("sidebar-engine-pill").querySelector(".dot-label").textContent = `Engine :${eng.port || 4002}`;
-
-  // Overall pill
-  const overall = $("ov-overall-badge");
-  if (gwOk && engOk) {
-    overall.textContent = "服务运行中";
-    overall.className = "pill-badge ok";
-  } else if (installed) {
-    overall.textContent = "已安装 · 未启动";
-    overall.className = "pill-badge warn";
-  } else {
-    overall.textContent = "待安装";
-    overall.className = "pill-badge";
-  }
-
-  // Step 1
+function _syncStataSelectToInput(cands) {
   const select = $("in-stata-select");
-  select.innerHTML = "";
-  if (!cands.length) {
-    const opt = document.createElement("option");
-    opt.value = "";
-    opt.textContent = "未自动发现 Stata，请在下方手动指定根目录";
-    select.appendChild(opt);
-    $("step1-badge").textContent = "需指定目录";
-    $("step1-badge").className = "pill-badge warn";
-  } else {
-    for (const c of cands) {
-      const opt = document.createElement("option");
-      opt.value = c.path;
-      opt.textContent = `${c.path} (${(c.edition || "").toUpperCase()} ${c.version || ""})`;
-      select.appendChild(opt);
-    }
-    if (!$("in-stata-path").value.trim()) {
-      $("in-stata-path").value = st.stata_path || cands[0].path;
-    }
-    $("step1-badge").textContent = `已就绪 · ${(cands[0].edition || "").toUpperCase()} ${cands[0].version || ""}`;
-    $("step1-badge").className = "pill-badge ok";
-  }
-
-  $("chip-python").textContent = `Python ${doc.python?.version || "?"}`;
-  $("chip-uv").textContent = `uv: ${doc.tools?.uv ? "已装" : "未装 (可选)"}`;
-  $("chip-git").textContent = `git: ${doc.tools?.git ? "已装" : "未装"}`;
-  $("chip-home").textContent = res.stateHome || doc.home || "~/.stata-mcp";
-
-  // Step 2
-  if (installed) {
-    $("step2-badge").textContent = `已安装 v${st.installer_version || "1.2.2"}`;
-    $("step2-badge").className = "pill-badge ok";
-  } else {
-    $("step2-badge").textContent = "尚未安装";
-    $("step2-badge").className = "pill-badge";
-  }
-  if (st.port) $("in-port").value = st.port;
-  if (st.default_timeout) $("in-timeout").value = st.default_timeout;
-
-  // Step 3
-  $("ov-gateway-status").textContent = gwOk ? "运行中" : "未运行";
-  $("ov-gateway-meta").textContent = `${rt.host || "127.0.0.1"}:${rt.port || 4001}` + (rt.pid ? ` · PID ${rt.pid}` : "");
-  $("ov-engine-status").textContent = engOk ? "运行中" : "未运行";
-  $("ov-engine-meta").textContent = `:${eng.port || 4002}` + (eng.pid ? ` · PID ${eng.pid}` : "");
-  if (gwOk && engOk) {
-    $("step3-badge").textContent = "双进程在线";
-    $("step3-badge").className = "pill-badge ok";
-  } else if (gwOk || engOk) {
-    $("step3-badge").textContent = "部分在线";
-    $("step3-badge").className = "pill-badge warn";
-  } else {
-    $("step3-badge").textContent = "未运行";
-    $("step3-badge").className = "pill-badge";
-  }
-
-  // Warn when another process already answers on port without our installation
-  const portConflict = !installed && gwOk;
-  $("port-conflict-banner").classList.toggle("hidden", !portConflict);
-  if (portConflict) {
-    $("port-conflict-text").textContent = `${rt.host || "127.0.0.1"}:${rt.port || 4001} 已有非本程序启动的服务在响应，直接启动可能会冲突。`;
-  }
-
-  // Doctor Tab Metrics
-  $("doc-platform").textContent = `${doc.platform || "?"} · ${doc.arch || "?"}`;
-  $("doc-stata-count").textContent = `发现 ${cands.length} 个 Stata 候选`;
-  $("doc-python").textContent = `Python ${doc.python?.version || "?"}`;
-  $("doc-tools").textContent = `uv: ${doc.tools?.uv ? "✓" : "×"} · git: ${doc.tools?.git ? "✓" : "×"}`;
-  $("doc-home").textContent = res.stateHome || doc.home || "~/.stata-mcp";
-  $("doc-installed").textContent = installed ? "state.json 正常" : "尚未安装";
-  $("doc-jobs").textContent = `${doc.jobs_count ?? 0} 个作业`;
-  $("doc-problems").textContent = doc.problems ? `${doc.problems} 项需注意` : "状态正常";
-  $("doctor-json-box").textContent = JSON.stringify(doc, null, 2);
+  const cur = $("in-stata-path").value.trim().toLowerCase();
+  if (!cur) return cands[0] || null;
+  const matched = cands.find((c) => (c.path || "").toLowerCase() === cur) || null;
+  if (matched) select.value = matched.path;
+  return matched;
 }
 
-function setActionBusy(busy) {
+async function refreshOverview() {
+  const refreshBtn = $("btn-refresh-overview");
+  if (refreshBtn) {
+    refreshBtn.disabled = true;
+    refreshBtn.textContent = "检测中…";
+  }
+  try {
+    const res = await api.getOverview({ stataPath: $("in-stata-path").value.trim() || undefined });
+    if (res.appVersion) {
+      $("brand-sub-version").textContent = `v${res.appVersion} · 17 Tools`;
+    }
+    const doc = res.doctor || {};
+    const rt = doc.runtime || {};
+    const eng = rt.engine || {};
+    const st = doc.state || {};
+    const cands = doc.stata_candidates || [];
+
+    const gwOk = Boolean(rt.healthy);
+    const engOk = Boolean(eng.healthy);
+    const installed = Boolean(doc.installed);
+
+    // Sidebar live dots
+    $("sidebar-gateway-pill").className = `status-dot-row ${gwOk ? "ok" : "bad"}`;
+    $("sidebar-gateway-pill").querySelector(".dot-label").textContent = `Gateway :${rt.port || 4001}`;
+    $("sidebar-engine-pill").className = `status-dot-row ${engOk ? "ok" : "bad"}`;
+    $("sidebar-engine-pill").querySelector(".dot-label").textContent = `Engine :${eng.port || 4002}`;
+
+    // Overall pill
+    const overall = $("ov-overall-badge");
+    if (gwOk && engOk) {
+      overall.textContent = "服务运行中";
+      overall.className = "pill-badge ok";
+    } else if (installed) {
+      overall.textContent = "已安装 · 未启动";
+      overall.className = "pill-badge warn";
+    } else {
+      overall.textContent = "待安装";
+      overall.className = "pill-badge";
+    }
+
+    // Step 1
+    const select = $("in-stata-select");
+    select.innerHTML = "";
+    if (!cands.length) {
+      const opt = document.createElement("option");
+      opt.value = "";
+      opt.textContent = "未自动发现 Stata，请在下方手动指定根目录";
+      select.appendChild(opt);
+      $("step1-badge").textContent = "需指定目录";
+      $("step1-badge").className = "pill-badge warn";
+    } else {
+      for (const c of cands) {
+        const opt = document.createElement("option");
+        opt.value = c.path;
+        opt.textContent = `${c.path} (${(c.edition || "").toUpperCase()} ${c.version || ""})`;
+        select.appendChild(opt);
+      }
+      if (!$("in-stata-path").value.trim()) {
+        $("in-stata-path").value = st.stata_path || cands[0].path;
+      }
+      const activeCand = _syncStataSelectToInput(cands);
+      if (activeCand && activeCand.valid !== false) {
+        $("step1-badge").textContent = `已就绪 · ${(activeCand.edition || "").toUpperCase()} ${activeCand.version || ""}`.trim();
+        $("step1-badge").className = "pill-badge ok";
+      } else if ($("in-stata-path").value.trim()) {
+        $("step1-badge").textContent = "目录无效或未检测到 Stata";
+        $("step1-badge").className = "pill-badge warn";
+      } else {
+        $("step1-badge").textContent = "需指定目录";
+        $("step1-badge").className = "pill-badge warn";
+      }
+    }
+
+    $("chip-python").textContent = `Python ${doc.python?.version || "?"}`;
+    $("chip-uv").textContent = `uv: ${doc.tools?.uv ? "已装" : "未装 (可选)"}`;
+    $("chip-git").textContent = `git: ${doc.tools?.git ? "已装" : "未装"}`;
+    $("chip-home").textContent = res.stateHome || doc.home || "~/.stata-mcp";
+
+    // Step 2
+    if (installed) {
+      $("step2-badge").textContent = `已安装 v${st.installer_version || "1.2.4"}`;
+      $("step2-badge").className = "pill-badge ok";
+    } else {
+      $("step2-badge").textContent = "尚未安装";
+      $("step2-badge").className = "pill-badge";
+    }
+    if (st.port && !stateUI.userEditedPort) $("in-port").value = st.port;
+    if (st.default_timeout && !stateUI.userEditedTimeout) $("in-timeout").value = st.default_timeout;
+
+    // Step 3
+    $("ov-gateway-status").textContent = gwOk ? "运行中" : "未运行";
+    $("ov-gateway-meta").textContent = `${rt.host || "127.0.0.1"}:${rt.port || 4001}` + (rt.pid ? ` · PID ${rt.pid}` : "");
+    $("ov-engine-status").textContent = engOk ? "运行中" : "未运行";
+    $("ov-engine-meta").textContent = `:${eng.port || 4002}` + (eng.pid ? ` · PID ${eng.pid}` : "");
+    if (gwOk && engOk) {
+      $("step3-badge").textContent = "双进程在线";
+      $("step3-badge").className = "pill-badge ok";
+    } else if (gwOk || engOk) {
+      $("step3-badge").textContent = "部分在线";
+      $("step3-badge").className = "pill-badge warn";
+    } else {
+      $("step3-badge").textContent = "未运行";
+      $("step3-badge").className = "pill-badge";
+    }
+
+    // Warn when another process already answers on port without our installation
+    const portConflict = !installed && gwOk;
+    $("port-conflict-banner").classList.toggle("hidden", !portConflict);
+    if (portConflict) {
+      $("port-conflict-text").textContent = `${rt.host || "127.0.0.1"}:${rt.port || 4001} 已有非本程序启动的服务在响应，直接启动可能会冲突。`;
+    }
+
+    // Doctor Tab Metrics
+    $("doc-platform").textContent = `${doc.platform || "?"} · ${doc.arch || "?"}`;
+    $("doc-stata-count").textContent = `发现 ${cands.length} 个 Stata 候选`;
+    $("doc-python").textContent = `Python ${doc.python?.version || "?"}`;
+    $("doc-tools").textContent = `uv: ${doc.tools?.uv ? "✓" : "×"} · git: ${doc.tools?.git ? "✓" : "×"}`;
+    $("doc-home").textContent = res.stateHome || doc.home || "~/.stata-mcp";
+    $("doc-installed").textContent = installed ? "state.json 正常" : "尚未安装";
+    $("doc-jobs").textContent = `${doc.jobs_count ?? 0} 个作业`;
+    $("doc-problems").textContent = doc.problems ? `${doc.problems} 项需注意` : "状态正常";
+    $("doctor-json-box").textContent = JSON.stringify(doc, null, 2);
+  } catch (err) {
+    $("ov-overall-badge").textContent = "检测异常";
+    $("ov-overall-badge").className = "pill-badge bad";
+    appendConsole(`\n[错误] 刷新状态失败: ${err?.message || err}\n`);
+  } finally {
+    if (refreshBtn) {
+      refreshBtn.disabled = false;
+      refreshBtn.textContent = "刷新状态";
+    }
+  }
+}
+
+const ACTION_BTN_MAP = {
+  install: "btn-install",
+  refresh: "btn-refresh-bin",
+  start: "btn-start",
+  stop: "btn-stop",
+  verify: "btn-verify",
+  uninstall: "btn-uninstall",
+};
+
+function setActionBusy(busy, activeAction = "") {
   stateUI.actionRunning = busy;
-  for (const id of ["btn-install", "btn-refresh-bin", "btn-start", "btn-stop", "btn-verify", "btn-uninstall"]) {
+  for (const id of Object.values(ACTION_BTN_MAP)) {
     const el = $(id);
-    if (el) el.disabled = busy;
+    if (!el) continue;
+    el.disabled = busy;
+    el.classList.toggle("is-loading", busy && ACTION_BTN_MAP[activeAction] === id);
   }
 }
 
@@ -236,8 +286,10 @@ async function runAction(action, extraOpts = {}) {
     appendConsole("\n[提示] 上一个操作仍在执行中，请稍候…\n");
     return;
   }
-  setActionBusy(true);
-  $("console-status-text").textContent = `正在执行 ${action}…`;
+  setActionBusy(true, action);
+  const statusEl = $("console-status-text");
+  statusEl.textContent = `正在执行 ${action}…`;
+  statusEl.className = "drawer-status running";
   $("console-drawer").open = true;
   try {
     const opts = {
@@ -249,9 +301,26 @@ async function runAction(action, extraOpts = {}) {
       ...extraOpts,
     };
     const res = await api.runAction(action, opts);
+    if (res.code !== 0 && res.stderr && !$("action-console").textContent.includes(res.stderr.trim())) {
+      appendConsole(`\n${res.stderr.trim()}\n`);
+    }
     appendConsole(`\n[退出码 ${res.code}]\n`);
-    $("console-status-text").textContent = res.code === 0 ? `${action} 完成` : `${action} 失败 (${res.code})`;
+    if (res.code === 0) {
+      statusEl.textContent = `${action} 完成`;
+      statusEl.className = "drawer-status ok";
+      if (action === "install" || action === "refresh") {
+        stateUI.userEditedPort = false;
+        stateUI.userEditedTimeout = false;
+      }
+    } else {
+      statusEl.textContent = `${action} 失败 (${res.code})`;
+      statusEl.className = "drawer-status bad";
+    }
     await refreshOverview();
+  } catch (err) {
+    appendConsole(`\n[异常] ${err?.message || err}\n`);
+    statusEl.textContent = `${action} 异常`;
+    statusEl.className = "drawer-status bad";
   } finally {
     setActionBusy(false);
   }
@@ -387,6 +456,9 @@ async function loadJobDetail(jobId) {
 async function lookupHelp() {
   const topic = $("help-topic-input").value.trim();
   if (!topic) return;
+  $("help-search-results").classList.add("hidden");
+  $("help-search-results").innerHTML = "";
+  $("help-output-box").classList.remove("hidden");
   $("help-output-box").textContent = "查询中…";
   const res = await api.lookupHelp({ topic, section: stateUI.helpSection });
   const seeWrap = $("help-also-see");
@@ -425,11 +497,35 @@ async function searchHelp() {
   if (!query) return;
   $("help-also-see").classList.add("hidden");
   const res = await api.searchHelp({ query, limit: 30 });
-  $("help-meta-bar").textContent = `关键词 "${query}" 命中 ${res.count} 条`;
-  $("help-output-box").textContent =
-    (res.results || [])
-      .map((r) => `${r.topic.padEnd(24)} -> ${r.target.padEnd(24)} [${r.source}] ${r.title || ""}`)
-      .join("\n") || "无匹配项";
+  const items = res.results || [];
+  $("help-meta-bar").textContent = `关键词 "${query}" 命中 ${res.count} 条（点击条目可直接阅读文档）`;
+  const resultsEl = $("help-search-results");
+  if (!items.length) {
+    resultsEl.classList.add("hidden");
+    resultsEl.innerHTML = "";
+    $("help-output-box").classList.remove("hidden");
+    $("help-output-box").textContent = "无匹配项";
+    return;
+  }
+  resultsEl.innerHTML = items
+    .map(
+      (r) => `<button type="button" class="search-result-row" data-topic="${escapeHtml(r.target || r.topic)}">
+        <div class="search-result-top">
+          <span>${escapeHtml(r.topic)}${r.target && r.target !== r.topic ? ` → ${escapeHtml(r.target)}` : ""}</span>
+          <span class="tool-cat">${escapeHtml(r.source)}</span>
+        </div>
+        <div class="search-result-title">${escapeHtml(r.title || "(点击查看 .sthlp 详情)")}</div>
+      </button>`,
+    )
+    .join("");
+  resultsEl.querySelectorAll("[data-topic]").forEach((b) => {
+    b.addEventListener("click", () => openHelpForTopic(b.dataset.topic));
+  });
+  resultsEl.classList.remove("hidden");
+  $("help-output-box").classList.add("hidden");
+  $("help-output-box").textContent = items
+    .map((r) => `${r.topic.padEnd(24)} -> ${r.target.padEnd(24)} [${r.source}] ${r.title || ""}`)
+    .join("\n");
 }
 
 /* ── 5. Anti-Loop Lint & Vectorize Guide ────────────────────────────── */
@@ -548,6 +644,7 @@ function wireEvents() {
     btn.addEventListener("click", () => switchTab(btn.dataset.tab));
   });
   api.onLog(({ text }) => appendConsole(text));
+  api.onStateChanged?.(() => refreshOverview());
 
   $("btn-open-home").addEventListener("click", () => api.openStateFolder());
   $("btn-refresh-overview").addEventListener("click", refreshOverview);
@@ -558,20 +655,35 @@ function wireEvents() {
   $("btn-verify").addEventListener("click", () => runAction("verify"));
   $("btn-clear-console").addEventListener("click", () => {
     $("action-console").textContent = "";
-    $("console-status-text").textContent = "已清空";
+    const statusEl = $("console-status-text");
+    statusEl.textContent = "已清空";
+    statusEl.className = "drawer-status";
   });
   $("btn-copy-console").addEventListener("click", () =>
     copyWithFeedback($("action-console").textContent, $("btn-copy-console")),
   );
 
   $("in-stata-select").addEventListener("change", (e) => {
-    if (e.target.value) $("in-stata-path").value = e.target.value;
+    if (e.target.value) {
+      $("in-stata-path").value = e.target.value;
+      refreshOverview();
+    }
   });
   $("btn-pick-stata").addEventListener("click", async () => {
     const dir = await api.pickStataDir();
-    if (dir) $("in-stata-path").value = dir;
+    if (dir) {
+      $("in-stata-path").value = dir;
+      refreshOverview();
+    }
+  });
+  $("in-port").addEventListener("input", () => {
+    stateUI.userEditedPort = true;
+  });
+  $("in-timeout").addEventListener("input", () => {
+    stateUI.userEditedTimeout = true;
   });
   $("btn-use-alt-port").addEventListener("click", () => {
+    stateUI.userEditedPort = true;
     $("in-port").value = "4011";
     $("ov-advanced-panel").open = true;
     $("port-conflict-banner").classList.add("hidden");
@@ -715,5 +827,4 @@ function wireEvents() {
 initPlatformAndTheme();
 renderToolsCatalog();
 wireEvents();
-refreshOverview();
-refreshConfigSnippet();
+refreshOverview().finally(() => refreshConfigSnippet());

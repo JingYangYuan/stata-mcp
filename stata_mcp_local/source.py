@@ -94,6 +94,7 @@ def _run(cmd: List[str], cwd: Optional[Path] = None, timeout: int = 900) -> subp
     # Never block headless installs on a credential prompt, and never leak
     # repository credentials through a pager or editor.
     env.update({"GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "", "GIT_PAGER": "cat", "GCM_INTERACTIVE": "never"})
+    kwargs = {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)} if os.name == "nt" else {}
     return subprocess.run(
         cmd,
         cwd=str(cwd) if cwd else None,
@@ -101,7 +102,10 @@ def _run(cmd: List[str], cwd: Optional[Path] = None, timeout: int = 900) -> subp
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=timeout,
+        **kwargs,
     )
 
 

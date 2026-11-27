@@ -107,3 +107,43 @@ test("CoreService rejects concurrent runAction while an action is active", async
   assert.equal(res.code, -2);
   svc._activeAction = null;
 });
+
+test("buildAugmentedEnv deduplicates Path/PATH keys on win32", () => {
+  const winEnv = buildAugmentedEnv({
+    platform: "win32",
+    env: { Path: "C:\\Windows\\System32", LOCALAPPDATA: "C:\\Users\\t\\AppData\\Local" },
+    homeDir: "C:\\Users\\t",
+  });
+  const pathKeys = Object.keys(winEnv).filter((k) => k.toLowerCase() === "path");
+  assert.deepEqual(pathKeys, ["PATH"]);
+  assert.ok(winEnv.PATH.includes("C:\\Windows\\System32"));
+});
+
+test("CoreService._runPython emits stderr log when command times out", async () => {
+  const logs = [];
+  const svc = new CoreService({
+    isPackaged: false,
+    appDir: path.join(desktopDir, "app"),
+    emitLog: (payload) => logs.push(payload),
+  });
+  const tmpScript = path.join(os.tmpdir(), `stata-mcp-timeout-${Date.now()}.py`);
+  fs.writeFileSync(tmpScript, "import time\ntime.sleep(5)\n", "utf8");
+  try {
+    const res = await svc._runPython(tmpScript, [], { stream: true, timeoutMs: 150 });
+    assert.equal(res.code, -1);
+    assert.ok(res.stderr.includes("timed out"));
+    assert.ok(logs.some((l) => l.stream === "stderr" && l.text.includes("超时")));
+  } finally {
+    fs.rmSync(tmpScript, { force: true });
+  }
+});
+
+test("renderer HTML contains no literal markdown backticks in UI text", () => {
+  const html = fs.readFileSync(path.join(desktopDir, "app", "renderer", "index.html"), "utf8");
+  const uiWithoutCodeSamples = html.replace(/<textarea\b[\s\S]*?<\/textarea>/gi, "");
+  assert.equal(
+    uiWithoutCodeSamples.includes("`"),
+    false,
+    "index.html should use <code> tags instead of literal backticks",
+  );
+});

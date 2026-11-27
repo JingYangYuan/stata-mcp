@@ -58,7 +58,7 @@ if _BIN_DIR not in sys.path:
 
 import stata_mcp_analysis  # noqa: E402
 
-GATEWAY_VERSION = "1.2.3"
+GATEWAY_VERSION = "1.2.4"
 TOOLS_COUNT = 17
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 4001

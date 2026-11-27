@@ -15,7 +15,7 @@
         <div class="brand-badge">SM</div>
         <div>
           <div class="brand-title">Stata MCP Studio</div>
-          <div class="brand-sub">v1.2.3 · 17 Tools</div>
+          <div class="brand-sub" id="brand-sub-version">v1.2.4 · 17 Tools</div>
         </div>
       </div>
 
@@ -177,7 +177,7 @@
                 <span class="step-num">3</span>
                 <div>
                   <h2>启动服务与端到端自检</h2>
-                  <p class="card-sub">本地双进程（网关 + Stata 引擎）常驻后台，随后运行 `verify` 验证 17 个工具</p>
+                  <p class="card-sub">本地双进程（网关 + Stata 引擎）常驻后台，随后运行 <code>verify</code> 验证 17 个工具</p>
                 </div>
               </div>
               <span class="pill-badge" id="step3-badge">未运行</span>
@@ -306,7 +306,7 @@
           <header class="panel-header">
             <div>
               <h1>异步作业与精确报错定位</h1>
-              <p>每一步 Stata 命令实时落盘，失败时自动映射回原 `.do` 文件行号与上下文</p>
+              <p>每一步 Stata 命令实时落盘，失败时自动映射回原 <code>.do</code> 文件行号与上下文</p>
             </div>
             <div class="header-actions">
               <button class="btn btn-ghost" id="btn-reload-jobs">刷新作业</button>
@@ -352,7 +352,7 @@
           <header class="panel-header">
             <div>
               <h1>Stata Help 离线速查</h1>
-              <p>直接读取本机 Stata 与 SSC 的 `.sthlp` 文档，自动解析缩写别名与 SMCL 排版</p>
+              <p>直接读取本机 Stata 与 SSC 的 <code>.sthlp</code> 文档，自动解析缩写别名与 SMCL 排版</p>
             </div>
           </header>
 
@@ -391,6 +391,7 @@
               <button class="btn btn-ghost btn-sm" id="btn-copy-help">复制文档</button>
             </div>
             <div class="quick-chips hidden" id="help-also-see"></div>
+            <div class="search-results-list hidden" id="help-search-results"></div>
             <pre class="console-box reader-box" id="help-output-box">输入命令并点击“查询文档”</pre>
           </div>
         </div>
@@ -402,7 +403,7 @@
           <header class="panel-header">
             <div>
               <h1>反循环体检与向量化改写</h1>
-              <p>拦截 `1/_N`、`levelsof + foreach`、`preserve` 循环等低效模式，提供地道向量化方案</p>
+              <p>拦截 <code>1/_N</code>、<code>levelsof + foreach</code>、<code>preserve</code> 循环等低效模式，提供地道向量化方案</p>
             </div>
             <div class="segmented" id="lint-mode-seg">
               <button type="button" class="seg-btn active" data-lint-mode="check">代码 / 文件体检</button>

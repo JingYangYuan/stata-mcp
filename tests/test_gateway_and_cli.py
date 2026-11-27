@@ -151,5 +151,58 @@ class GatewayJobErrorTests(unittest.TestCase):
             self.assertTrue(Path(job.error_path).is_file())
 
 
+class WindowsRuntimeAndBridgeTests(unittest.TestCase):
+    def test_is_alive_handles_invalid_and_self_pid(self):
+        import os
+
+        self.assertFalse(runtime.is_alive(0))
+        self.assertFalse(runtime.is_alive(-1))
+        self.assertTrue(runtime.is_alive(os.getpid()))
+
+    def test_stop_pid_timeout_does_not_assume_sigkill_on_windows(self):
+        import os
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            pid_file = Path(tmp) / "test.pid"
+            pid_file.write_text("999999\n", encoding="utf-8")
+            with mock.patch.object(runtime, "is_alive", return_value=True), \
+                 mock.patch.object(runtime.subprocess, "run") as mock_run, \
+                 mock.patch.object(runtime.os, "kill", side_effect=AssertionError("os.kill must not be called on nt")) if os.name == "nt" else mock.patch.object(runtime.os, "kill"):
+                stopped = runtime._stop_pid(999999, pid_file, timeout=0.05)
+                self.assertTrue(stopped)
+                self.assertFalse(pid_file.exists())
+                if os.name == "nt":
+                    self.assertGreaterEqual(mock_run.call_count, 2)
+
+    def test_port_free_detects_bound_loopback_port(self):
+        import socket
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(1)
+        bound_port = sock.getsockname()[1]
+        try:
+            self.assertFalse(runtime.port_free("127.0.0.1", bound_port))
+        finally:
+            sock.close()
+        self.assertTrue(runtime.port_free("127.0.0.1", bound_port))
+
+    def test_bridge_default_start_argv_handles_spaces_in_path(self):
+        spec = importlib.util.spec_from_file_location("stata_mcp_bridge", str(ROOT / "bin" / "stata-mcp-bridge.py"))
+        bridge_mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(bridge_mod)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            spaced_home = Path(tmp) / "dir with spaces"
+            (spaced_home / "bin").mkdir(parents=True)
+            launcher = spaced_home / "bin" / "stata-mcp-start.py"
+            launcher.write_text("# launcher\n", encoding="utf-8")
+            args = bridge_mod.parse_args(["--home", str(spaced_home)])
+            settings = bridge_mod.Settings(args)
+            self.assertIsInstance(settings.start_argv, list)
+            self.assertEqual(settings.start_argv[1], str(launcher))
+
+
 if __name__ == "__main__":
     unittest.main()

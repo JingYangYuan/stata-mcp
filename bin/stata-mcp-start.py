@@ -56,7 +56,7 @@ def load_state(home):
     return data if isinstance(data, dict) else {}
 
 
-def health(host, port, timeout=2.0):
+def health(host, port, timeout=1.5):
     try:
         connection = http.client.HTTPConnection(host, port, timeout=timeout)
         try:
@@ -78,27 +78,77 @@ def health(host, port, timeout=2.0):
 def wait_healthy(host, port, timeout):
     deadline = time.time() + timeout
     while time.time() < deadline:
-        info = health(host, port, timeout=2.0)
+        info = health(host, port, timeout=1.5)
         if info:
             return info
         time.sleep(0.4)
     return None
 
 
+def _win_no_window_kwargs():
+    if os.name == "nt":
+        return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)}
+    return {}
+
+
+def _win_background_flags(breakaway=True):
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) | getattr(
+        subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200
+    )
+    if breakaway:
+        flags |= getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000)
+    return flags
+
+
+def _is_alive_win32(pid):
+    try:
+        import ctypes
+        import ctypes.wintypes as wt
+
+        k32 = ctypes.windll.kernel32
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        handle = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+        if not handle:
+            err = k32.GetLastError()
+            if err == 5:
+                return True
+            if err == 87:
+                return False
+            return None
+        try:
+            code = wt.DWORD()
+            if not k32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return None
+            return code.value == STILL_ACTIVE
+        finally:
+            k32.CloseHandle(handle)
+    except Exception:
+        return None
+
+
 def is_alive(pid):
     if pid <= 0:
         return False
     if os.name == "nt":
+        direct = _is_alive_win32(pid)
+        if direct is not None:
+            return direct
         try:
             result = subprocess.run(
-                ["tasklist", "/FI", "PID eq %d" % pid, "/NH"],
+                ["tasklist", "/FI", "PID eq %d" % pid, "/FO", "CSV", "/NH"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=15,
+                **_win_no_window_kwargs(),
             )
         except (OSError, subprocess.SubprocessError):
             return False
-        return str(pid) in (result.stdout or "")
+        target = '"%d"' % pid
+        return any(target in line for line in (result.stdout or "").splitlines())
     try:
         os.kill(pid, 0)
     except OSError:
@@ -191,10 +241,26 @@ def spawn(argv, console_log):
     handle = open(console_log, "ab")
     try:
         if os.name == "nt":
-            flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-            process = subprocess.Popen(
-                argv, stdin=subprocess.DEVNULL, stdout=handle, stderr=handle, creationflags=flags
-            )
+            try:
+                process = subprocess.Popen(
+                    argv,
+                    stdin=subprocess.DEVNULL,
+                    stdout=handle,
+                    stderr=handle,
+                    creationflags=_win_background_flags(breakaway=True),
+                    close_fds=True,
+                )
+            except OSError as exc:
+                if getattr(exc, "winerror", None) != 5:
+                    raise
+                process = subprocess.Popen(
+                    argv,
+                    stdin=subprocess.DEVNULL,
+                    stdout=handle,
+                    stderr=handle,
+                    creationflags=_win_background_flags(breakaway=False),
+                    close_fds=True,
+                )
         else:
             process = subprocess.Popen(
                 argv,
@@ -202,6 +268,7 @@ def spawn(argv, console_log):
                 stdout=handle,
                 stderr=handle,
                 start_new_session=True,
+                close_fds=True,
             )
     finally:
         handle.close()
@@ -244,20 +311,50 @@ def stop_one(pid, label):
         return False
     try:
         if os.name == "nt":
-            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=15,
+                **_win_no_window_kwargs(),
+            )
         else:
             os.kill(pid, signal.SIGTERM)
-    except OSError:
+    except (OSError, subprocess.SubprocessError):
         pass
     deadline = time.time() + 10
     while time.time() < deadline and is_alive(pid):
         time.sleep(0.2)
     if is_alive(pid):
         try:
-            os.kill(pid, signal.SIGKILL)
-        except OSError:
+            if os.name == "nt":
+                subprocess.run(
+                    ["taskkill", "/PID", str(pid), "/T", "/F"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=10,
+                    **_win_no_window_kwargs(),
+                )
+            else:
+                sigkill = getattr(signal, "SIGKILL", None)
+                if sigkill is not None:
+                    os.kill(pid, sigkill)
+        except (OSError, subprocess.SubprocessError):
             pass
     return True
+
+
+def _health_gateway_pid(info):
+    if not isinstance(info, dict):
+        return 0
+    gw = info.get("gateway")
+    if isinstance(gw, dict):
+        try:
+            val = int(gw.get("pid") or 0)
+            return val if val > 0 else 0
+        except (TypeError, ValueError):
+            return 0
+    return 0
 
 
 def stop(home, state, host, port_override):
@@ -267,6 +364,10 @@ def stop(home, state, host, port_override):
 
     stopped = False
     stopped = stop_one(read_pid(gateway_pid_file), "gateway") or stopped
+    if not stopped:
+        gw_pid = _health_gateway_pid(health(host, port, timeout=1.0))
+        if gw_pid:
+            stopped = stop_one(gw_pid, "gateway") or stopped
     stopped = stop_one(read_pid(engine_pid_file), "engine") or stopped
     for path in (gateway_pid_file, engine_pid_file):
         try:
@@ -275,7 +376,7 @@ def stop(home, state, host, port_override):
             pass
 
     if not stopped:
-        if health(host, port) or health(host, engine_port):
+        if health(host, port, timeout=1.0) or health(host, engine_port, timeout=1.0):
             return 1
     return 0
 

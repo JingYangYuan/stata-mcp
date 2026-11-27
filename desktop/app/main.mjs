@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, shell, Tray } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, shell, Tray } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CoreService } from "./core-service.mjs";
@@ -15,16 +15,27 @@ function broadcastLog(payload) {
   }
 }
 
+function broadcastStateChanged() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("core:state-changed");
+  }
+}
+
 function createWindow() {
   const iconPath = path.resolve(appDir, "..", "assets", "icon.png");
   const isMac = process.platform === "darwin";
+  if (!isMac) {
+    Menu.setApplicationMenu(null);
+  }
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 820,
     minWidth: 960,
     minHeight: 660,
+    show: false,
+    autoHideMenuBar: !isMac,
     title: "Stata MCP Studio",
-    backgroundColor: "#f4f6f9",
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#111318" : "#f4f6f9",
     icon: iconPath,
     ...(isMac ? { titleBarStyle: "hiddenInset", trafficLightPosition: { x: 16, y: 16 } } : {}),
     webPreferences: {
@@ -33,6 +44,14 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: true,
     },
+  });
+  if (!isMac) {
+    mainWindow.setMenuBarVisibility(false);
+  }
+  mainWindow.once("ready-to-show", () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.show();
+    }
   });
   mainWindow.loadFile(path.join(appDir, "renderer", "index.html"));
   mainWindow.on("close", (event) => {
@@ -62,11 +81,17 @@ function createTray() {
       { type: "separator" },
       {
         label: "启动后台网关与引擎",
-        click: () => service?.runAction("start"),
+        click: async () => {
+          await service?.runAction("start");
+          broadcastStateChanged();
+        },
       },
       {
         label: "停止后台服务",
-        click: () => service?.runAction("stop"),
+        click: async () => {
+          await service?.runAction("stop");
+          broadcastStateChanged();
+        },
       },
       { type: "separator" },
       {
