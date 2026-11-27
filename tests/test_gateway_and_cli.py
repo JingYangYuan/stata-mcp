@@ -8,8 +8,11 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "bin"))
 
-from stata_mcp_local import cli, config_emit, paths, runtime  # noqa: E402
+from stata_mcp_local import cli, config_emit, paths, runtime, source  # noqa: E402
 import importlib.util  # noqa: E402
+import shutil  # noqa: E402
+import stat  # noqa: E402
+import subprocess  # noqa: E402
 
 
 def _load_jobs_module():
@@ -69,6 +72,47 @@ class CliAndRuntimeTests(unittest.TestCase):
             payload = json.loads(buf.getvalue())
             self.assertFalse(payload["runtime"]["healthy"])
             self.assertEqual(payload["runtime"]["port"], unused_port)
+
+    def test_rmtree_force_removes_readonly_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ro_dir = Path(tmp) / "broken_git" / "objects" / "ab"
+            ro_dir.mkdir(parents=True)
+            ro_file = ro_dir / "packfile.idx"
+            ro_file.write_text("readonly", encoding="utf-8")
+            ro_file.chmod(stat.S_IREAD)
+            self.assertTrue(paths.rmtree_force(Path(tmp) / "broken_git"))
+            self.assertFalse((Path(tmp) / "broken_git").exists())
+
+    def test_clone_replaces_corrupted_readonly_dest_atomically(self):
+        if not shutil.which("git"):
+            self.skipTest("git not available")
+        with tempfile.TemporaryDirectory() as tmp:
+            upstream = Path(tmp) / "upstream"
+            (upstream / "src").mkdir(parents=True)
+            (upstream / "src" / "stata_mcp_server.py").write_text("# mock server\n", encoding="utf-8")
+            env = {
+                **__import__("os").environ,
+                "GIT_AUTHOR_NAME": "Test",
+                "GIT_AUTHOR_EMAIL": "t@example.com",
+                "GIT_COMMITTER_NAME": "Test",
+                "GIT_COMMITTER_EMAIL": "t@example.com",
+            }
+            subprocess.run(["git", "init", str(upstream)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
+            subprocess.run(["git", "-C", str(upstream), "add", "."], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
+            subprocess.run(["git", "-C", str(upstream), "commit", "-m", "init"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
+
+            dest = Path(tmp) / "server"
+            broken = dest / ".git" / "objects" / "00"
+            broken.mkdir(parents=True)
+            ro = broken / "deadbeef"
+            ro.write_text("partial", encoding="utf-8")
+            ro.chmod(stat.S_IREAD)
+
+            built = source.clone(str(upstream), dest)
+            self.assertTrue(built.entry.is_file())
+            self.assertEqual(built.origin, "git")
+            self.assertEqual(list(Path(tmp).glob("server.staging-*")), [])
+            self.assertEqual(list(Path(tmp).glob("server.old-*")), [])
 
 
 class GatewayJobErrorTests(unittest.TestCase):

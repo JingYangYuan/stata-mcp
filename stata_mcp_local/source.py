@@ -14,9 +14,12 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
+
+from . import paths
 
 DEFAULT_REPO = "https://github.com/hanlulong/stata-mcp.git"
 ENTRY_RELATIVE = ("src/stata_mcp_server.py", "stata_mcp_server.py")
@@ -125,30 +128,37 @@ def mirror_url(repo: str, mirror: Optional[str]) -> str:
 
 
 def clone(repo: str, dest: Path, mirror: Optional[str] = None, ref: Optional[str] = None) -> Source:
-    """Clone ``repo`` into ``dest`` (replacing any previous checkout)."""
+    """Clone ``repo`` into a staging directory, then atomically replace ``dest``."""
     if not git_available():
         raise SourceError(
             "git is required to fetch the server source. Install git, or point "
             "--server-dir at an existing source checkout."
         )
     url = mirror_url(repo, mirror)
-    if dest.exists():
-        shutil.rmtree(str(dest), ignore_errors=True)
     dest.parent.mkdir(parents=True, exist_ok=True)
 
+    # Best-effort cleanup of leftover staging/old trees from interrupted runs.
+    for stale_pattern in (dest.name + ".staging-*", dest.name + ".old-*"):
+        for stale in dest.parent.glob(stale_pattern):
+            paths.rmtree_force(stale)
+
+    staging = dest.parent / ("%s.staging-%s" % (dest.name, uuid.uuid4().hex[:8]))
     cmd = ["git", "clone", "--depth", "1", "--no-tags", "--quiet"]
     if ref:
         cmd += ["--branch", ref]
-    cmd += [url, str(dest)]
+    cmd += [url, str(staging)]
 
     try:
         result = _run(cmd)
     except subprocess.TimeoutExpired:
+        paths.rmtree_force(staging)
         raise SourceError("git clone timed out after 15 minutes: %s" % url)
     except OSError as exc:
+        paths.rmtree_force(staging)
         raise SourceError("could not run git: %s" % exc)
 
     if result.returncode != 0:
+        paths.rmtree_force(staging)
         detail = (result.stderr or result.stdout or "").strip().splitlines()
         tail = detail[-4:] if detail else []
         message = "git clone failed for %s" % url
@@ -159,6 +169,31 @@ def clone(repo: str, dest: Path, mirror: Optional[str] = None, ref: Optional[str
             "--mirror <prefix, e.g. https://your-mirror.example/>, --repo <url>."
         )
         raise SourceError(message)
+
+    if not find_entry(staging):
+        paths.rmtree_force(staging)
+        raise SourceError(
+            "cloned %s but none of %s exists; is the repository layout expected?"
+            % (url, ", ".join(ENTRY_RELATIVE))
+        )
+
+    if dest.exists() and not paths.rmtree_force(dest):
+        old = dest.parent / ("%s.old-%s" % (dest.name, uuid.uuid4().hex[:6]))
+        try:
+            os.replace(str(dest), str(old))
+            paths.rmtree_force(old)
+        except OSError as exc:
+            paths.rmtree_force(staging)
+            raise SourceError(
+                "previous directory %s could not be removed (%s); close programs locking it and retry"
+                % (dest, exc)
+            )
+
+    try:
+        shutil.move(str(staging), str(dest))
+    except OSError as exc:
+        paths.rmtree_force(staging)
+        raise SourceError("could not move cloned source into %s: %s" % (dest, exc))
 
     source = inspect(dest)
     if not source:

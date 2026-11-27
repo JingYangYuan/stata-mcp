@@ -13,7 +13,11 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import stat
+import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -163,6 +167,56 @@ class Layout:
             self.state_file.unlink()
         except OSError:
             pass
+
+
+def rmtree_force(path: Path, retries: int = 3) -> bool:
+    """Remove a file or directory tree even when Windows marks objects read-only.
+
+    Git pack/index files under ``.git/objects`` carry the read-only attribute
+    on Windows, causing plain ``shutil.rmtree`` to leave behind a broken partial
+    directory. Clears read-only bits on error and retries briefly for transient
+    file-handle locks.
+    """
+    target = Path(path)
+    if not target.exists() and not target.is_symlink():
+        return True
+    if target.is_file() or target.is_symlink():
+        for attempt in range(max(1, retries)):
+            try:
+                os.chmod(str(target), stat.S_IWRITE | stat.S_IREAD)
+            except OSError:
+                pass
+            try:
+                target.unlink()
+                return True
+            except OSError:
+                if attempt + 1 < retries:
+                    time.sleep(0.15 * (attempt + 1))
+        return not target.exists()
+
+    def _on_error(func, failed_path, _exc):
+        try:
+            os.chmod(failed_path, stat.S_IWRITE | stat.S_IREAD)
+        except OSError:
+            pass
+        try:
+            func(failed_path)
+        except OSError:
+            pass
+
+    for attempt in range(max(1, retries)):
+        try:
+            if sys.version_info >= (3, 12):
+                shutil.rmtree(str(target), onexc=_on_error)
+            else:
+                shutil.rmtree(str(target), onerror=_on_error)
+        except OSError:
+            pass
+        if not target.exists():
+            return True
+        if attempt + 1 < retries:
+            time.sleep(0.15 * (attempt + 1))
+    return not target.exists()
 
 
 def _atomic_write_json(path: Path, data: Any, mode: Optional[int] = 0o600) -> None:

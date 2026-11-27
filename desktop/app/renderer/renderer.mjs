@@ -36,6 +36,7 @@ const stateUI = {
   helpSection: "",
   logName: "gateway.log",
   allRecipes: [],
+  actionRunning: false,
 };
 
 function $(id) {
@@ -203,6 +204,13 @@ async function refreshOverview() {
     $("step3-badge").className = "pill-badge";
   }
 
+  // Warn when another process already answers on port without our installation
+  const portConflict = !installed && gwOk;
+  $("port-conflict-banner").classList.toggle("hidden", !portConflict);
+  if (portConflict) {
+    $("port-conflict-text").textContent = `${rt.host || "127.0.0.1"}:${rt.port || 4001} 已有非本程序启动的服务在响应，直接启动可能会冲突。`;
+  }
+
   // Doctor Tab Metrics
   $("doc-platform").textContent = `${doc.platform || "?"} · ${doc.arch || "?"}`;
   $("doc-stata-count").textContent = `发现 ${cands.length} 个 Stata 候选`;
@@ -215,21 +223,38 @@ async function refreshOverview() {
   $("doctor-json-box").textContent = JSON.stringify(doc, null, 2);
 }
 
+function setActionBusy(busy) {
+  stateUI.actionRunning = busy;
+  for (const id of ["btn-install", "btn-refresh-bin", "btn-start", "btn-stop", "btn-verify", "btn-uninstall"]) {
+    const el = $(id);
+    if (el) el.disabled = busy;
+  }
+}
+
 async function runAction(action, extraOpts = {}) {
+  if (stateUI.actionRunning) {
+    appendConsole("\n[提示] 上一个操作仍在执行中，请稍候…\n");
+    return;
+  }
+  setActionBusy(true);
   $("console-status-text").textContent = `正在执行 ${action}…`;
   $("console-drawer").open = true;
-  const opts = {
-    stataPath: $("in-stata-path").value.trim(),
-    port: Number($("in-port").value || 4001),
-    defaultTimeout: Number($("in-timeout").value || 21600),
-    mirror: $("in-mirror").value.trim(),
-    refresh: $("chk-reclone").checked,
-    ...extraOpts,
-  };
-  const res = await api.runAction(action, opts);
-  appendConsole(`\n[退出码 ${res.code}]\n`);
-  $("console-status-text").textContent = res.code === 0 ? `${action} 完成` : `${action} 失败 (${res.code})`;
-  await refreshOverview();
+  try {
+    const opts = {
+      stataPath: $("in-stata-path").value.trim(),
+      port: Number($("in-port").value || 4001),
+      defaultTimeout: Number($("in-timeout").value || 21600),
+      mirror: $("in-mirror").value.trim(),
+      refresh: $("chk-reclone").checked,
+      ...extraOpts,
+    };
+    const res = await api.runAction(action, opts);
+    appendConsole(`\n[退出码 ${res.code}]\n`);
+    $("console-status-text").textContent = res.code === 0 ? `${action} 完成` : `${action} 失败 (${res.code})`;
+    await refreshOverview();
+  } finally {
+    setActionBusy(false);
+  }
 }
 
 /* ── 2. Config & 17 Tools ───────────────────────────────────────────── */
@@ -545,6 +570,11 @@ function wireEvents() {
   $("btn-pick-stata").addEventListener("click", async () => {
     const dir = await api.pickStataDir();
     if (dir) $("in-stata-path").value = dir;
+  });
+  $("btn-use-alt-port").addEventListener("click", () => {
+    $("in-port").value = "4011";
+    $("ov-advanced-panel").open = true;
+    $("port-conflict-banner").classList.add("hidden");
   });
 
   // Config tab

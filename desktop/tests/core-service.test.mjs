@@ -27,6 +27,7 @@ test("buildAugmentedEnv sets UTF-8 flags and platform PATH entries", () => {
     homeDir: "/Users/tester",
   });
   assert.equal(macEnv.PYTHONUTF8, "1");
+  assert.equal(macEnv.PYTHONUNBUFFERED, "1");
   assert.ok(macEnv.PATH.includes("/opt/homebrew/bin"));
   assert.ok(macEnv.PATH.includes("/Users/tester/.local/bin"));
 
@@ -93,4 +94,16 @@ test("renderer HTML contains all 6 tabs and every ID referenced by renderer.mjs"
   for (const id of new Set(ids)) {
     assert.ok(html.includes(`id="${id}"`), `renderer.mjs references missing DOM id: ${id}`);
   }
+});
+
+test("CoreService rejects concurrent runAction while an action is active", async () => {
+  const svc = new CoreService({
+    isPackaged: false,
+    appDir: path.join(desktopDir, "app"),
+  });
+  svc._activeAction = "install";
+  const res = await svc.runAction("install");
+  assert.equal(res.ok, false);
+  assert.equal(res.code, -2);
+  svc._activeAction = null;
 });

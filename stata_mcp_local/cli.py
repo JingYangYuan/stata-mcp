@@ -167,6 +167,11 @@ def cmd_install(args: argparse.Namespace) -> int:
     if runtime.read_pid(layout) or runtime.read_gateway_pid(layout):
         ui.step("Stopping the previous runtime")
         ui.ok(runtime.stop(layout, previous))
+    elif not args.no_start and runtime.health(host, port):
+        ui.warn(
+            "port %d is already answered by another process not started by this installation; "
+            "stop that process or re-run with --port 4011" % port
+        )
 
     ui.step("Installing helper scripts")
     written = runtime.write_helper_scripts(layout, Path(__file__).resolve().parent.parent)
@@ -178,6 +183,8 @@ def cmd_install(args: argparse.Namespace) -> int:
         build = source.require_local(args.server_dir)
         ui.ok("using local checkout: %s" % build.describe())
     else:
+        if args.refresh or not source.inspect(layout.server_dir):
+            ui.info("fetching %s ..." % source.mirror_url(args.repo, args.mirror))
         build = source.acquire(
             server_dir=None,
             dest=layout.server_dir,
@@ -718,7 +725,7 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
         targets.append(layout.home)
     for target in targets:
         if target.exists():
-            shutil.rmtree(str(target), ignore_errors=True)
+            paths.rmtree_force(target)
             ui.ok("removed %s" % target)
     layout.remove_state()
     if not args.purge:

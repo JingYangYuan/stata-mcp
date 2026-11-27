@@ -15,7 +15,7 @@
         <div class="brand-badge">SM</div>
         <div>
           <div class="brand-title">Stata MCP Studio</div>
-          <div class="brand-sub">v1.2.2 · 17 Tools</div>
+          <div class="brand-sub">v1.2.3 · 17 Tools</div>
         </div>
       </div>
 
@@ -139,7 +139,15 @@
               <button class="btn btn-secondary" id="btn-refresh-bin">原地升级脚本 (refresh)</button>
             </div>
 
-            <details class="advanced-panel">
+            <div class="port-warning-banner hidden" id="port-conflict-banner">
+              <div>
+                <strong>检测到外部服务正占用当前端口</strong>
+                <div class="card-sub" id="port-conflict-text">127.0.0.1:4001 已有非本程序启动的服务在响应，直接启动可能会冲突。</div>
+              </div>
+              <button type="button" class="btn btn-secondary btn-sm" id="btn-use-alt-port">改用端口 4011</button>
+            </div>
+
+            <details class="advanced-panel" id="ov-advanced-panel">
               <summary>高级选项（端口、默认超时、Git 镜像、重新克隆源码）</summary>
               <div class="form-grid two-col-eq">
                 <label class="field-label">

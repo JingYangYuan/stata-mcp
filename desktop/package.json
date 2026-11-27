@@ -1,6 +1,6 @@
 {
   "name": "stata-mcp-desktop",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "private": true,
   "description": "Stata MCP Studio — 跨平台（macOS / Windows）本地 Stata MCP 部署、作业报错定位、Help 速查与反循环体检桌面控制台。",
   "license": "MIT",

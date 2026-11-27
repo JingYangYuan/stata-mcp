@@ -741,6 +741,17 @@ textarea:focus {
   padding-top: 10px;
 }
 
+.port-warning-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 13px;
+  border-radius: 9px;
+  background: var(--warn-soft);
+  border: 1px solid rgba(217, 119, 6, 0.35);
+}
+
 .advanced-panel summary,
 .drawer-summary {
   cursor: pointer;

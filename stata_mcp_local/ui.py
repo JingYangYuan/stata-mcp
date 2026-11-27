@@ -24,36 +24,36 @@ def _paint(text: str, code: str) -> str:
 
 
 def banner(title: str) -> None:
-    print()
-    print(_paint("==> " + title, "36"))
+    print(flush=True)
+    print(_paint("==> " + title, "36"), flush=True)
 
 
 def step(title: str) -> None:
-    print()
-    print(_paint("==> " + title, "36"))
+    print(flush=True)
+    print(_paint("==> " + title, "36"), flush=True)
 
 
 def ok(message: str) -> None:
-    print("    " + _paint("OK: ", "32") + message)
+    print("    " + _paint("OK: ", "32") + message, flush=True)
 
 
 def info(message: str = "") -> None:
-    print(("    " + message) if message else "")
+    print(("    " + message) if message else "", flush=True)
 
 
 def warn(message: str) -> None:
-    print("    " + _paint("warn: ", "33") + message)
+    print("    " + _paint("warn: ", "33") + message, flush=True)
 
 
 def error(message: str) -> None:
-    print("    " + _paint("error: ", "31") + message, file=sys.stderr)
+    print("    " + _paint("error: ", "31") + message, file=sys.stderr, flush=True)
 
 
 def hint(message: str) -> None:
-    print("    " + _paint("hint: ", "35") + message)
+    print("    " + _paint("hint: ", "35") + message, flush=True)
 
 
 def done(message: str) -> None:
-    print()
-    print(_paint("==> " + message, "32"))
-    print()
+    print(flush=True)
+    print(_paint("==> " + message, "32"), flush=True)
+    print(flush=True)

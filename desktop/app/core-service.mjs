@@ -50,6 +50,7 @@ export function buildAugmentedEnv({
   next.PATH = merged.join(sep);
   next.PYTHONUTF8 = "1";
   next.PYTHONIOENCODING = "utf-8";
+  next.PYTHONUNBUFFERED = "1";
   return next;
 }
 
@@ -160,6 +161,7 @@ export class CoreService {
     this.emitLog = emitLog;
     this.coreRoot = resolveCoreRoot({ isPackaged, resourcesPath, appDir });
     this.env = buildAugmentedEnv({ platform });
+    this._activeAction = null;
   }
 
   resolveStateHome() {
@@ -191,7 +193,7 @@ export class CoreService {
       env: this.env,
       stateHome: this.resolveStateHome(),
     });
-    const fullArgs = [...py.argsPrefix, scriptPath, ...args];
+    const fullArgs = [...py.argsPrefix, "-u", scriptPath, ...args];
     return new Promise((resolve) => {
       const child = spawn(py.cmd, fullArgs, {
         cwd: this.coreRoot,
@@ -278,29 +280,39 @@ export class CoreService {
     if (!allowed.has(action)) {
       return { ok: false, code: 2, stdout: "", stderr: `Unsupported action: ${action}` };
     }
-    const args = [action];
-    if (action === "install") {
-      args.push("-y");
-      if (opts.stataPath) args.push("--stata-path", opts.stataPath);
-      if (opts.port) args.push("--port", String(opts.port));
-      if (opts.mirror) args.push("--mirror", opts.mirror);
-      if (opts.defaultTimeout) args.push("--default-timeout", String(opts.defaultTimeout));
-      if (opts.refresh) args.push("--refresh");
-    } else if (action === "refresh") {
-      if (opts.port) args.push("--port", String(opts.port));
-      if (opts.defaultTimeout) args.push("--default-timeout", String(opts.defaultTimeout));
-    } else if (action === "start") {
-      if (opts.port) args.push("--port", String(opts.port));
-    } else if (action === "uninstall") {
-      if (opts.purge) args.push("--purge");
+    if (this._activeAction) {
+      const msg = `操作 "${this._activeAction}" 正在执行中，请等待完成后再试。\n`;
+      this.emitLog({ stream: "stderr", text: msg });
+      return { ok: false, code: -2, stdout: "", stderr: msg.trim() };
     }
+    this._activeAction = action;
+    try {
+      const args = [action];
+      if (action === "install") {
+        args.push("-y");
+        if (opts.stataPath) args.push("--stata-path", opts.stataPath);
+        if (opts.port) args.push("--port", String(opts.port));
+        if (opts.mirror) args.push("--mirror", opts.mirror);
+        if (opts.defaultTimeout) args.push("--default-timeout", String(opts.defaultTimeout));
+        if (opts.refresh) args.push("--refresh");
+      } else if (action === "refresh") {
+        if (opts.port) args.push("--port", String(opts.port));
+        if (opts.defaultTimeout) args.push("--default-timeout", String(opts.defaultTimeout));
+      } else if (action === "start") {
+        if (opts.port) args.push("--port", String(opts.port));
+      } else if (action === "uninstall") {
+        if (opts.purge) args.push("--purge");
+      }
 
-    this.emitLog({ stream: "meta", text: `\n$ python install.py ${args.join(" ")}\n` });
-    const res = await this._runPython(this._installScript(), args, {
-      stream: true,
-      timeoutMs: action === "install" ? 600000 : 120000,
-    });
-    return { ok: res.code === 0, ...res };
+      this.emitLog({ stream: "meta", text: `\n$ python install.py ${args.join(" ")}\n` });
+      const res = await this._runPython(this._installScript(), args, {
+        stream: true,
+        timeoutMs: action === "install" ? 600000 : 120000,
+      });
+      return { ok: res.code === 0, ...res };
+    } finally {
+      this._activeAction = null;
+    }
   }
 
   async getConfigSnippet(opts = {}) {
