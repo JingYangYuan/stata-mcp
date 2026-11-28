@@ -265,38 +265,43 @@ test("detectInstalledTerminals detects Linux terminals in PATH", () => {
   assert.deepEqual(installedIds, ["ghostty", "kitty", "gnome-terminal"]);
 });
 
-test("buildTerminalLaunchPlan for macOS Ghostty supports cold start and running AppleScript with fallback", () => {
+test("buildTerminalLaunchPlan for macOS Ghostty disables window-save-state to avoid duplicate windows", () => {
   const ghostty = { id: "ghostty", name: "Ghostty", target: "/Applications/Ghostty.app" };
-  const coldPlan = buildTerminalLaunchPlan({
+  const cmdPlan = buildTerminalLaunchPlan({
     platform: "darwin",
     terminal: ghostty,
     targetDir: "/Users/tester/paper dir",
     cmdToRun: "claude",
     env: { SHELL: "/bin/zsh" },
-    isAppRunning: false,
-    hasGhosttySdef: true,
   });
-  assert.equal(coldPlan.command, "open");
-  assert.equal(coldPlan.mode, "detached");
-  assert.deepEqual(coldPlan.args.slice(0, 4), ["-na", "/Applications/Ghostty.app", "--args", "--working-directory=/Users/tester/paper dir"]);
-  assert.equal(coldPlan.args[4], "-e");
-  assert.equal(coldPlan.args[5], "/bin/zsh");
+  assert.equal(cmdPlan.command, "open");
+  assert.equal(cmdPlan.mode, "detached");
+  assert.deepEqual(cmdPlan.args.slice(0, 5), [
+    "-na",
+    "/Applications/Ghostty.app",
+    "--args",
+    "--window-save-state=never",
+    "--working-directory=/Users/tester/paper dir",
+  ]);
+  assert.equal(cmdPlan.args[5], "-e");
+  assert.equal(cmdPlan.args[6], "/bin/zsh");
 
-  const warmPlan = buildTerminalLaunchPlan({
+  const shellPlan = buildTerminalLaunchPlan({
     platform: "darwin",
     terminal: ghostty,
     targetDir: "/Users/tester/paper dir",
-    cmdToRun: "codex",
+    cmdToRun: "",
     env: { SHELL: "/bin/zsh" },
-    isAppRunning: true,
-    hasGhosttySdef: true,
   });
-  assert.equal(warmPlan.command, "osascript");
-  assert.equal(warmPlan.mode, "control");
-  assert.ok(warmPlan.args[1].includes("new surface configuration"));
-  assert.ok(warmPlan.args[1].includes("new window with configuration cfg"));
-  assert.ok(warmPlan.fallback);
-  assert.equal(warmPlan.fallback.command, "open");
+  assert.equal(shellPlan.command, "open");
+  assert.equal(shellPlan.mode, "detached");
+  assert.deepEqual(shellPlan.args, [
+    "-na",
+    "/Applications/Ghostty.app",
+    "--args",
+    "--window-save-state=never",
+    "--working-directory=/Users/tester/paper dir",
+  ]);
 });
 
 test("buildTerminalLaunchPlan for macOS Terminal.app and iTerm2 avoids creating an empty window", () => {

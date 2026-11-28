@@ -513,8 +513,6 @@ export function buildTerminalLaunchPlan({
   targetDir,
   cmdToRun = "",
   env = process.env,
-  isAppRunning = false,
-  hasGhosttySdef = false,
   preferredPowerShell = "powershell.exe",
   minttyPath = "",
   gitBashBin = "",
@@ -531,39 +529,25 @@ export function buildTerminalLaunchPlan({
 
     if (termId === "ghostty") {
       const appPath = termTarget || "/Applications/Ghostty.app";
-      const openNaPlan = {
+      // Override window-save-state in-memory so Ghostty does not restore an extra blank/old window alongside the new one.
+      return {
         command: "open",
         args: cleanCmd
-          ? ["-na", appPath, "--args", `--working-directory=${targetDir}`, "-e", userShell, ...shellFlags, wrappedCmd]
-          : ["-na", appPath, "--args", `--working-directory=${targetDir}`],
+          ? [
+              "-na",
+              appPath,
+              "--args",
+              "--window-save-state=never",
+              `--working-directory=${targetDir}`,
+              "-e",
+              userShell,
+              ...shellFlags,
+              wrappedCmd,
+            ]
+          : ["-na", appPath, "--args", "--window-save-state=never", `--working-directory=${targetDir}`],
         spawnOpts: {},
         mode: "detached",
       };
-      if (isAppRunning && hasGhosttySdef) {
-        const script = [
-          "on run argv",
-          "  set targetDir to item 1 of argv",
-          "  set cmdText to item 2 of argv",
-          '  tell application "Ghostty"',
-          "    set cfg to new surface configuration",
-          "    set initial working directory of cfg to targetDir",
-          '    if cmdText is not "" then',
-          "      set initial input of cfg to (cmdText & linefeed)",
-          "    end if",
-          "    new window with configuration cfg",
-          "    activate",
-          "  end tell",
-          "end run",
-        ].join("\n");
-        return {
-          command: "osascript",
-          args: ["-e", script, targetDir, cleanCmd],
-          spawnOpts: {},
-          mode: "control",
-          fallback: openNaPlan,
-        };
-      }
-      return openNaPlan;
     }
 
     if (termId === "terminal") {
@@ -1532,17 +1516,6 @@ export class CoreService {
       return { ok: false, error: "未检测到可用的终端应用" };
     }
 
-    let isAppRunning = false;
-    let hasGhosttySdef = false;
-    if (this.platform === "darwin" && selectedTerminal.id === "ghostty") {
-      const pgrepRes = await this._runControlCommand("pgrep", ["-x", "ghostty"], { timeoutMs: 2000 });
-      isAppRunning = pgrepRes.ok;
-      hasGhosttySdef = Boolean(
-        selectedTerminal.target &&
-          fs.existsSync(path.join(selectedTerminal.target, "Contents", "Resources", "Ghostty.sdef")),
-      );
-    }
-
     let preferredPowerShell = "powershell.exe";
     let minttyPath = "";
     let gitBashBin = "";
@@ -1564,8 +1537,6 @@ export class CoreService {
       targetDir,
       cmdToRun,
       env: this.env,
-      isAppRunning,
-      hasGhosttySdef,
       preferredPowerShell,
       minttyPath,
       gitBashBin,
