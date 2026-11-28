@@ -128,6 +128,7 @@ class CliAndRuntimeTests(unittest.TestCase):
 
     def test_unified_server_argv_includes_gateway_home(self):
         self.assertEqual(runtime.DEFAULT_ENGINE_PORT, 4001)
+        home_dir = Path("/tmp/home")
         argv = runtime.server_argv(
             "/usr/bin/python3",
             Path("/tmp/server/src/stata_mcp_server.py"),
@@ -136,10 +137,10 @@ class CliAndRuntimeTests(unittest.TestCase):
             "127.0.0.1",
             4001,
             Path("/tmp/server.log"),
-            home=Path("/tmp/home"),
+            home=home_dir,
         )
         self.assertIn("--gateway-home", argv)
-        self.assertIn("/tmp/home", argv)
+        self.assertIn(str(home_dir), argv)
 
     def test_install_parser_accepts_pip_index(self):
         parser = cli.build_parser()
