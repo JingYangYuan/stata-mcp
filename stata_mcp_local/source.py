@@ -22,6 +22,7 @@ from typing import List, Optional
 from . import paths
 
 DEFAULT_REPO = "https://github.com/hanlulong/stata-mcp.git"
+BUNDLED_VERSION = "bundled-0.5.3"
 ENTRY_RELATIVE = ("src/stata_mcp_server.py", "stata_mcp_server.py")
 REQUIREMENTS_RELATIVE = ("src/requirements.txt", "requirements.txt")
 
@@ -35,7 +36,7 @@ class Source:
     root: Path
     entry: Path
     requirements: Optional[Path]
-    origin: str  # "local" | "git"
+    origin: str  # "bundled" | "local" | "git"
     commit: str = ""
 
     def describe(self) -> str:
@@ -209,6 +210,60 @@ def clone(repo: str, dest: Path, mirror: Optional[str] = None, ref: Optional[str
     return source
 
 
+def find_bundled(repo_root: Path) -> Optional[Source]:
+    """Return the bundled ``server/`` checkout shipped inside the package, if present."""
+    candidate = repo_root / "server"
+    if not candidate.is_dir():
+        return None
+    src = inspect(candidate)
+    if not src:
+        return None
+    src.origin = "bundled"
+    src.commit = src.commit or BUNDLED_VERSION
+    return src
+
+
+def _copy_clean_tree(src: Path, dest: Path) -> None:
+    dest.mkdir(parents=True, exist_ok=True)
+    for item in src.iterdir():
+        if item.name in ("__pycache__", ".git", ".DS_Store") or item.name.endswith((".pyc", ".pyo")):
+            continue
+        target = dest / item.name
+        if item.is_dir():
+            _copy_clean_tree(item, target)
+        else:
+            shutil.copy2(str(item), str(target))
+
+
+def stage_bundled(bundled_root: Path, dest: Path) -> Source:
+    """Atomically copy the bundled server tree into ``dest`` without git."""
+    if not find_entry(bundled_root):
+        raise SourceError("bundled server missing entry under %s" % bundled_root)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    for stale_pattern in (dest.name + ".staging-*", dest.name + ".old-*"):
+        for stale in dest.parent.glob(stale_pattern):
+            paths.rmtree_force(stale)
+
+    staging = dest.parent / ("%s.staging-%s" % (dest.name, uuid.uuid4().hex[:8]))
+    try:
+        _copy_clean_tree(bundled_root, staging)
+        if dest.exists() and not paths.rmtree_force(dest):
+            old = dest.parent / ("%s.old-%s" % (dest.name, uuid.uuid4().hex[:6]))
+            os.replace(str(dest), str(old))
+            paths.rmtree_force(old)
+        shutil.move(str(staging), str(dest))
+    except BaseException:
+        paths.rmtree_force(staging)
+        raise
+
+    staged = inspect(dest)
+    if not staged:
+        raise SourceError("failed to stage bundled server into %s" % dest)
+    staged.origin = "bundled"
+    staged.commit = BUNDLED_VERSION
+    return staged
+
+
 def acquire(
     server_dir: Optional[str],
     dest: Path,
@@ -216,10 +271,15 @@ def acquire(
     mirror: Optional[str] = None,
     ref: Optional[str] = None,
     refresh: bool = False,
+    bundled_root: Optional[Path] = None,
 ) -> Source:
-    """Return a usable source tree, reusing an existing checkout when possible."""
+    """Return a usable source tree (bundled -> existing -> git clone)."""
     if server_dir:
         return require_local(server_dir)
+
+    custom_remote = bool((repo and repo != DEFAULT_REPO) or mirror or ref)
+    if bundled_root and not custom_remote and find_entry(bundled_root):
+        return stage_bundled(bundled_root, dest)
 
     if dest.is_dir() and not refresh:
         source = inspect(dest)

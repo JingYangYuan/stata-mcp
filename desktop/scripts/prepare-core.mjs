@@ -12,6 +12,7 @@ const REQUIRED_ITEMS = [
   "LICENSE",
   "README.md",
   "bin",
+  "server",
   "stata_mcp_local",
   "docs",
 ];

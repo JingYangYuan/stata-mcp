@@ -34,7 +34,7 @@ const stateUI = {
   selectedJobId: "",
   jobsCache: [],
   helpSection: "",
-  logName: "gateway.log",
+  logName: "server.log",
   allRecipes: [],
   actionRunning: false,
   userEditedPort: false,
@@ -224,12 +224,15 @@ async function refreshOverview() {
     const gwOk = Boolean(rt.healthy);
     const engOk = Boolean(eng.healthy);
     const installed = Boolean(doc.installed);
+    const unified = st.mode === "unified" || eng.unified || rt.mode === "unified" || (!rt.healthy && !eng.healthy && doc.bundled_server);
 
     // Sidebar live dots
     $("sidebar-gateway-pill").className = `status-dot-row ${gwOk ? "ok" : "bad"}`;
-    $("sidebar-gateway-pill").querySelector(".dot-label").textContent = `Gateway :${rt.port || 4001}`;
+    $("sidebar-gateway-pill").querySelector(".dot-label").textContent = `Stata MCP :${rt.port || 4001}`;
     $("sidebar-engine-pill").className = `status-dot-row ${engOk ? "ok" : "bad"}`;
-    $("sidebar-engine-pill").querySelector(".dot-label").textContent = `Engine :${eng.port || 4002}`;
+    $("sidebar-engine-pill").querySelector(".dot-label").textContent = unified
+      ? "内置引擎 · 单端口"
+      : `Engine :${eng.port || 4001}`;
 
     // Overall pill
     const overall = $("ov-overall-badge");
@@ -279,12 +282,14 @@ async function refreshOverview() {
 
     $("chip-python").textContent = `Python ${doc.python?.version || "?"}`;
     $("chip-uv").textContent = `uv: ${doc.tools?.uv ? "已装" : "未装 (可选)"}`;
-    $("chip-git").textContent = `git: ${doc.tools?.git ? "已装" : "未装"}`;
+    $("chip-git").textContent = doc.bundled_server
+      ? "内置服务端 v0.5.3 (免 Git)"
+      : `git: ${doc.tools?.git ? "已装" : "未装"}`;
     $("chip-home").textContent = res.stateHome || doc.home || "~/.stata-mcp";
 
     // Step 2
     if (installed) {
-      $("step2-badge").textContent = `已安装 v${st.installer_version || "1.2.4"}`;
+      $("step2-badge").textContent = `已安装 v${st.installer_version || "1.4.0"}`;
       $("step2-badge").className = "pill-badge ok";
     } else {
       $("step2-badge").textContent = "尚未安装";
@@ -297,9 +302,11 @@ async function refreshOverview() {
     $("ov-gateway-status").textContent = gwOk ? "运行中" : "未运行";
     $("ov-gateway-meta").textContent = `${rt.host || "127.0.0.1"}:${rt.port || 4001}` + (rt.pid ? ` · PID ${rt.pid}` : "");
     $("ov-engine-status").textContent = engOk ? "运行中" : "未运行";
-    $("ov-engine-meta").textContent = `:${eng.port || 4002}` + (eng.pid ? ` · PID ${eng.pid}` : "");
+    $("ov-engine-meta").textContent = unified
+      ? `融合于 :${rt.port || 4001} · 内置引擎`
+      : `:${eng.port || 4001}` + (eng.pid ? ` · PID ${eng.pid}` : "");
     if (gwOk && engOk) {
-      $("step3-badge").textContent = "双进程在线";
+      $("step3-badge").textContent = unified ? "单端口在线" : "双进程在线";
       $("step3-badge").className = "pill-badge ok";
     } else if (gwOk || engOk) {
       $("step3-badge").textContent = "部分在线";
@@ -374,8 +381,7 @@ async function runAction(action, extraOpts = {}) {
       stataPath: $("in-stata-path").value.trim(),
       port: Number($("in-port").value || 4001),
       defaultTimeout: Number($("in-timeout").value || 21600),
-      mirror: $("in-mirror").value.trim(),
-      refresh: $("chk-reclone").checked,
+      pipIndex: $("in-pip-index").value.trim(),
       ...extraOpts,
     };
     const res = await api.runAction(action, opts);
@@ -793,6 +799,47 @@ function wireEvents() {
     $("ov-advanced-panel").open = true;
     $("port-conflict-banner").classList.add("hidden");
   });
+
+  // Environment mirror links & PyPI presets
+  document.querySelectorAll("#env-mirror-links [data-open-url]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      try {
+        await api.openExternalUrl(btn.dataset.openUrl);
+        showSnackbar(`已在浏览器打开：${btn.textContent.trim()}`);
+      } catch (err) {
+        showSnackbar(`打开链接失败：${err?.message || err}`);
+      }
+    });
+  });
+
+  const syncPipIndexUI = (url) => {
+    const clean = String(url || "").trim();
+    $("in-pip-index").value = clean;
+    localStorage.setItem("stata-mcp-pip-index", clean);
+    let activeLabel = "";
+    document.querySelectorAll("#pypi-mirror-presets [data-pip-index]").forEach((btn) => {
+      const matched = btn.dataset.pipIndex === clean;
+      btn.classList.toggle("active", matched);
+      if (matched) activeLabel = btn.dataset.mirrorLabel || btn.textContent.trim();
+    });
+    const installBtn = $("btn-install");
+    if (installBtn && !stateUI.actionRunning) {
+      installBtn.textContent = clean
+        ? `一键安装 / 重装（${activeLabel || "自定义源"}）`
+        : "一键安装 / 重装";
+    }
+  };
+
+  document.querySelectorAll("#pypi-mirror-presets [data-pip-index]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      syncPipIndexUI(btn.dataset.pipIndex);
+      showSnackbar(`已选用 PyPI 源：${btn.textContent.trim()}`);
+    });
+  });
+  $("in-pip-index").addEventListener("input", () => {
+    syncPipIndexUI($("in-pip-index").value);
+  });
+  syncPipIndexUI(localStorage.getItem("stata-mcp-pip-index") || "");
 
   // Config tab
   document.querySelectorAll("#cfg-transport-seg .seg-btn").forEach((b) => {

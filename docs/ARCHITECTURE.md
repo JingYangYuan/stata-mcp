@@ -31,27 +31,20 @@ desktop/
 必须能在没有仓库的情况下独立运行。`stata-mcp-jobs.py` 需要服务端 venv 里的 `mcp` 包（上游依赖之一），
 由状态记录的解释器启动。
 
-## 双进程结构与长任务
+## 单进程单端口结构与长任务
 
 ```text
-MCP 客户端 ──> :4001 网关 stata-mcp-jobs.py ──> :4002 上游引擎 stata_mcp_server.py ──> Stata
-                    │
-                    ├─ tools/list、tools/call（保持上游工具名）
-                    ├─ stata_run_file/selection：最多等 20s，未完成即返回 job_id
+MCP 客户端 ──> :4001 单进程融合服务（server/src/stata_mcp_server.py --gateway-home <state>）
+                    ├─ /mcp-streamable（挂载 bin/stata-mcp-jobs.py 的 17 工具异步网关）
+                    ├─ /run_file/stream、/stop_execution、/view_data、/v1/tools（同进程 FastAPI 路由）
                     └─ jobs/<job_id>/records.jsonl + journal.log（每一步一条记录）
 ```
 
-为什么要多一层：
+为什么将网关与引擎融合到单端口 `:4001`：
 
-- 上游 `stata_run_file` 是一次阻塞调用，默认超时 600s；任何超过客户端工具超时
-  （不少宿主默认 30s）的 do 文件都会直接失败，且过程中没有任何可读输出。
-- 网关把同一个 do 文件变成后台任务，**客户端调用永远在 20s 内返回**，长任务再久也不会被掐；
-  之后用 `stata_job_tail` 按 offset 取“上次之后新增的步骤”，实现一步一条记录。
-- 上游源码**不做任何修改**：网关只调用它的 HTTP 接口（`/run_file/stream`、`/stop_execution`、
-  `/v1/tools`），所以重新 clone / 升级上游都不破坏本层。
-
-`stata-mcp-start.py` 幂等：网关健康即退出 0；否则先确保引擎健康（:4002），再启动网关（:4001），
-分别写 `run/server.pid`、`run/jobs.pid`，轮询 `/health` 直到就绪或超时。
+- 上游 `stata_run_file` 是一次阻塞调用，默认超时 600s；任何超过客户端工具超时（常见 30s）的 do 文件都会直接失败。网关将异步作业、17 个扩展 MCP 工具、精确报错行号定位与反循环分析全部挂载到同一 uvicorn 进程的 `/mcp-streamable`，同时内部 HTTP 调用均在工作线程中执行，既避免事件循环阻塞又省去第二个内部端口 `:4002`。
+- `stata-mcp-start.py` 幂等：`:4001/health` 返回健康且模式正常即退出 0；否则启动统一入口并写 `run/server.pid`，轮询 `/health` 直到就绪或超时。
+- 若存在旧版双端口残留的 `run/jobs.pid`，`refresh` 与 `stop` 会自动停止并清理旧网关进程，无缝迁移到单端口模式。
 
 ## 为什么桥接用标准库
 

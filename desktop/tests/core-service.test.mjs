@@ -95,9 +95,20 @@ test("renderer HTML contains all 6 tabs and every ID referenced by renderer.mjs"
     assert.ok(html.includes(`id="${id}"`), `renderer.mjs references missing DOM id: ${id}`);
   }
 
-  for (const extraId of ["global-progress-bar", "app-snackbar", "workflow-stepper"]) {
+  for (const extraId of [
+    "global-progress-bar",
+    "app-snackbar",
+    "workflow-stepper",
+    "env-mirror-links",
+    "pypi-mirror-presets",
+    "in-pip-index",
+  ]) {
     assert.ok(html.includes(`id="${extraId}"`), `missing UI id: ${extraId}`);
   }
+  assert.ok(
+    fs.existsSync(path.join(repoRoot, "server", "src", "stata_mcp_server.py")),
+    "bundled server/src/stata_mcp_server.py should exist in repo",
+  );
   assert.ok(html.includes("data-motion-choice"));
   assert.ok(html.includes("data-density-choice"));
 });

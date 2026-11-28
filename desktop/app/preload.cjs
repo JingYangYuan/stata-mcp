@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld("stataMcpDesktop", {
   pickConfigFile: () => ipcRenderer.invoke("dialog:pick-config-file"),
   copyText: (text) => ipcRenderer.invoke("app:copy-text", text),
   openStateFolder: () => ipcRenderer.invoke("app:open-state-folder"),
+  openExternalUrl: (url) => ipcRenderer.invoke("app:open-external", url),
   onLog: (listener) => {
     const handler = (_event, payload) => listener(payload);
     ipcRenderer.on("core:log", handler);

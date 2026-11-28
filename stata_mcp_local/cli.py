@@ -77,6 +77,7 @@ def _record_install(
     state = {
         "installed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "installer_version": __version__,
+        "mode": "unified",
         "server_dir": str(build.root),
         "server_entry": str(build.entry),
         "requirements": str(build.requirements) if build.requirements else "",
@@ -139,17 +140,26 @@ def cmd_install(args: argparse.Namespace) -> int:
         if not plan_only:
             return 2
 
+    repo_root = Path(__file__).resolve().parent.parent
+    bundled = source.find_bundled(repo_root)
     choice = runtime.detect_python(args.python, prefer_uv=True)
     ui.ok("Python: %s" % choice.describe())
-    if not source.git_available() and not args.server_dir:
+    if not bundled and not source.git_available() and not args.server_dir:
         ui.warn("git is not on PATH; a source checkout must be supplied with --server-dir")
 
     ui.step("Plan")
     ui.info("state directory : %s" % layout.home)
-    ui.info("server source   : %s" % (args.server_dir or source.mirror_url(args.repo, args.mirror)))
+    if args.server_dir:
+        plan_source = args.server_dir
+    elif bundled and not (args.repo != source.DEFAULT_REPO or args.mirror or args.ref):
+        plan_source = "bundled (%s, zero git clone)" % bundled.commit
+    else:
+        plan_source = source.mirror_url(args.repo, args.mirror)
+    ui.info("server source   : %s" % plan_source)
     ui.info("venv            : %s" % (args.venv or layout.venv_dir))
-    ui.info("endpoint        : http://%s:%d%s (gateway)" % (host, port, runtime.MCP_PATH))
-    ui.info("engine endpoint : http://%s:%d (internal, upstream server)" % (host, port + 1))
+    ui.info("endpoint        : http://%s:%d%s (unified single-port server)" % (host, port, runtime.MCP_PATH))
+    if getattr(args, "pip_index", ""):
+        ui.info("pip index       : %s" % args.pip_index)
     ui.info("job timeout     : %.0fs (%.1fh), sync wait %.0fs" % (args.default_timeout, args.default_timeout / 3600.0, args.sync_wait))
     ui.info("config files    : none modified (snippet is printed; use `config --write-config PATH`)")
     if plan_only:
@@ -183,7 +193,9 @@ def cmd_install(args: argparse.Namespace) -> int:
         build = source.require_local(args.server_dir)
         ui.ok("using local checkout: %s" % build.describe())
     else:
-        if args.refresh or not source.inspect(layout.server_dir):
+        if bundled and not (args.repo != source.DEFAULT_REPO or args.mirror or args.ref):
+            ui.info("staging bundled server (%s) ..." % bundled.commit)
+        elif args.refresh or not source.inspect(layout.server_dir):
             ui.info("fetching %s ..." % source.mirror_url(args.repo, args.mirror))
         build = source.acquire(
             server_dir=None,
@@ -192,6 +204,7 @@ def cmd_install(args: argparse.Namespace) -> int:
             mirror=args.mirror,
             ref=args.ref,
             refresh=args.refresh,
+            bundled_root=bundled.root if bundled else None,
         )
         ui.ok("source: %s" % build.describe())
     ui.info("entry: %s" % build.entry)
@@ -212,14 +225,19 @@ def cmd_install(args: argparse.Namespace) -> int:
         ui.ok("venv interpreter: %s" % python)
         if build.requirements and not args.skip_deps:
             ui.info("installing %s" % build.requirements)
-            output = runtime.install_dependencies(python, build.requirements, choice)
+            output = runtime.install_dependencies(
+                python,
+                build.requirements,
+                choice,
+                index_url=getattr(args, "pip_index", ""),
+            )
             tail = output.strip().splitlines()[-1:] or ["dependencies installed"]
             ui.ok(tail[0])
         elif not build.requirements:
             ui.warn("no requirements file in source tree; skipping dependency install")
 
     ui.step("Recording installation")
-    engine_port = runtime.pick_engine_port(host, port)
+    engine_port = port
     state = _record_install(
         layout,
         build,
@@ -234,7 +252,7 @@ def cmd_install(args: argparse.Namespace) -> int:
         float(args.sync_wait),
     )
     ui.ok("state written to %s" % layout.state_file)
-    ui.info("client-facing port %d, engine port %d" % (port, engine_port))
+    ui.info("unified single-port mode on :%d" % port)
 
     ui.step("Creating launchers")
     for path in runtime.write_launchers(layout, str(python)):
@@ -326,7 +344,9 @@ def cmd_start(args: argparse.Namespace) -> int:
     state = _load_state_or_fail(layout)
     if args.port:
         state["port"] = int(args.port)
-        if not state.get("engine_port") or int(state["engine_port"]) == int(args.port):
+        if runtime._is_unified_state(state):
+            state["engine_port"] = int(args.port)
+        elif not state.get("engine_port") or int(state["engine_port"]) == int(args.port):
             state["engine_port"] = runtime.pick_engine_port(state.get("host", runtime.DEFAULT_HOST), int(args.port))
     try:
         _started, message = runtime.start(layout, state, wait=float(args.wait))
@@ -339,24 +359,38 @@ def cmd_start(args: argparse.Namespace) -> int:
 
 
 def cmd_refresh(args: argparse.Namespace) -> int:
-    """Re-stage the gateway/bridge/launcher and restart, without cloning or pip."""
+    """Re-stage helper scripts + bundled server and restart in unified single-port mode."""
     layout = _layout(args)
     state = _load_state_or_fail(layout)
     host = state.get("host", runtime.DEFAULT_HOST)
     port = int(args.port or state.get("port") or runtime.DEFAULT_PORT)
+    repo_root = Path(__file__).resolve().parent.parent
 
     ui.step("Stopping the running runtime")
     ui.ok(runtime.stop(layout, state))
 
     ui.step("Re-staging helper scripts")
-    for path in runtime.write_helper_scripts(layout, Path(__file__).resolve().parent.parent):
+    for path in runtime.write_helper_scripts(layout, repo_root):
         ui.ok(str(path))
 
+    bundled = source.find_bundled(repo_root)
+    if bundled:
+        ui.step("Re-staging bundled server")
+        staged = source.stage_bundled(bundled.root, layout.server_dir)
+        state["server_dir"] = str(staged.root)
+        state["server_entry"] = str(staged.entry)
+        if staged.requirements:
+            state["requirements"] = str(staged.requirements)
+        state["source_origin"] = staged.origin
+        state["commit"] = staged.commit
+        ui.ok("server: %s" % staged.describe())
+
     ui.step("Updating the installation record")
-    engine_port = runtime.pick_engine_port(host, port, state.get("engine_port"))
+    engine_port = port
     state.update(
         {
             "installer_version": __version__,
+            "mode": "unified",
             "refreshed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             "port": port,
             "engine_port": engine_port,
@@ -372,7 +406,7 @@ def cmd_refresh(args: argparse.Namespace) -> int:
         }
     )
     layout.save_state(state)
-    ui.ok("client-facing port %d, engine port %d" % (port, engine_port))
+    ui.ok("unified single-port mode on :%d" % port)
 
     ui.step("Creating launchers")
     python = state.get("python")
@@ -468,6 +502,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     if getattr(args, "json", False):
         uv_path = shutil.which("uv")
         git_path = shutil.which("git")
+        bundled = source.find_bundled(Path(__file__).resolve().parent.parent)
         payload = {
             "platform": sys.platform,
             "arch": arch,
@@ -476,6 +511,10 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                 "version": "%d.%d.%d" % sys.version_info[:3],
             },
             "tools": {"git": git_path or "", "uv": uv_path or ""},
+            "bundled_server": {
+                "available": bool(bundled),
+                "version": bundled.commit if bundled else "",
+            },
             "stata_candidates": [
                 {
                     "path": str(c.path),
@@ -843,6 +882,12 @@ def build_parser() -> argparse.ArgumentParser:
     install.add_argument("--refresh", action="store_true", help="re-clone even if a checkout already exists")
     install.add_argument("--venv", metavar="DIR", help="reuse an existing virtual environment")
     install.add_argument("--skip-deps", action="store_true", help="do not install the requirements")
+    install.add_argument(
+        "--pip-index",
+        metavar="URL",
+        default="",
+        help="PyPI index mirror URL for installing Python dependencies",
+    )
     install.add_argument("--no-start", action="store_true", help="install without starting the server")
     install.add_argument("--wait", type=float, default=120.0, help="seconds to wait for health (default: 120)")
     install.add_argument(

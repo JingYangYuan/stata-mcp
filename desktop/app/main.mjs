@@ -165,6 +165,14 @@ ipcMain.handle("app:open-state-folder", async () => {
   await shell.openPath(target);
   return { path: target };
 });
+ipcMain.handle("app:open-external", async (_e, rawUrl) => {
+  const url = String(rawUrl || "").trim();
+  if (!/^https?:\/\//i.test(url)) {
+    throw new Error("Only http(s) URLs are allowed");
+  }
+  await shell.openExternal(url);
+  return { ok: true, url };
+});
 
 ipcMain.handle("dialog:pick-stata-dir", async (event) => {
   const parent = BrowserWindow.fromWebContents(event.sender) || mainWindow;

@@ -8,6 +8,11 @@ const coreDir = path.join(desktopDir, "resources", "stata-mcp-core");
 
 const EXPECTED_FILES = [
   "install.py",
+  "server/LICENSE",
+  "server/src/requirements.txt",
+  "server/src/stata_mcp_server.py",
+  "server/src/session_manager.py",
+  "server/src/stata_worker.py",
   "stata_mcp_local/__init__.py",
   "stata_mcp_local/cli.py",
   "stata_mcp_local/config_emit.py",

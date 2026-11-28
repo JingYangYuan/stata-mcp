@@ -113,7 +113,7 @@ class RealStataAntiLoopTests(unittest.TestCase):
 
         do = """
         clear
-        set obs 5000
+        set obs 25000
         set seed 42
         gen double x = rnormal(10, 2)
         gen double y = runiform(1, 5)

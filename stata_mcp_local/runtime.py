@@ -26,9 +26,7 @@ from . import paths
 MIN_PYTHON = (3, 9)
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 4001
-# The engine (upstream server) moves one port up; the client-facing port keeps
-# serving MCP so existing client configuration stays valid.
-DEFAULT_ENGINE_PORT = 4002
+DEFAULT_ENGINE_PORT = 4001
 DEFAULT_JOB_TIMEOUT = 21600.0  # 6 hours
 DEFAULT_SYNC_WAIT = 20.0
 MCP_PATH = "/mcp-streamable"
@@ -241,19 +239,26 @@ def create_venv(venv_dir: Path, choice: PythonChoice) -> Path:
     return target
 
 
-def install_dependencies(venv_python: Path, requirements: Path, choice: PythonChoice) -> str:
+def install_dependencies(
+    venv_python: Path,
+    requirements: Path,
+    choice: PythonChoice,
+    index_url: Optional[str] = None,
+) -> str:
     """Install the server's requirements into the venv.
 
     Notes on privacy: only the packages listed by the upstream project are
-    installed, into this project's own venv. No --index-url override and no
-    credentials are injected; the user's normal package index settings apply.
+    installed, into this project's own venv. When `index_url` is omitted, the
+    user's normal package index settings apply with no override or credentials.
     """
+    mirror = (index_url or "").strip()
+    extra_index = ["--index-url", mirror] if (mirror and choice.uv) else (["-i", mirror] if mirror else [])
     if choice.uv:
-        cmd = [choice.uv, "pip", "install", "--python", str(venv_python), "-r", str(requirements)]
+        cmd = [choice.uv, "pip", "install", "--python", str(venv_python), *extra_index, "-r", str(requirements)]
     else:
         # Make sure pip itself exists in the fresh environment, then install.
         subprocess.run(
-            [str(venv_python), "-m", "pip", "install", "--upgrade", "pip"],
+            [str(venv_python), "-m", "pip", "install", "--upgrade", *extra_index, "pip"],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -261,7 +266,7 @@ def install_dependencies(venv_python: Path, requirements: Path, choice: PythonCh
             errors="replace",
             **_win_no_window_kwargs(),
         )
-        cmd = [str(venv_python), "-m", "pip", "install", "-r", str(requirements)]
+        cmd = [str(venv_python), "-m", "pip", "install", *extra_index, "-r", str(requirements)]
     result = subprocess.run(
         cmd,
         stdout=subprocess.PIPE,
@@ -288,8 +293,9 @@ def server_argv(
     host: str,
     port: int,
     log_file: Path,
+    home: Optional[Path] = None,
 ) -> List[str]:
-    """Argv for the upstream engine (runs on the internal port)."""
+    """Argv for the Stata MCP server (unified single-port when ``home`` is given)."""
     argv = [
         python,
         str(entry),
@@ -304,6 +310,8 @@ def server_argv(
     ]
     if stata_edition in ("mp", "se", "be"):
         argv += ["--stata-edition", stata_edition]
+    if home is not None:
+        argv += ["--gateway-home", str(home)]
     return argv
 
 
@@ -481,7 +489,24 @@ def _spawn(argv: List[str], console_log: Path) -> int:
     return process.pid
 
 
+def _is_unified_state(state: Dict[str, Any]) -> bool:
+    mode = (state.get("mode") or "").strip().lower()
+    if mode == "unified":
+        return True
+    try:
+        p = int(state.get("port", DEFAULT_PORT))
+        ep = int(state.get("engine_port", p))
+        return p == ep
+    except (TypeError, ValueError):
+        return False
+
+
 def _engine_port(state: Dict[str, Any]) -> int:
+    if _is_unified_state(state):
+        try:
+            return int(state.get("port", DEFAULT_PORT))
+        except (TypeError, ValueError):
+            return DEFAULT_PORT
     try:
         return int(state.get("engine_port") or (int(state.get("port", DEFAULT_PORT)) + 1))
     except (TypeError, ValueError):
@@ -512,6 +537,7 @@ def _start_engine(
     entry: str,
     python: str,
     stata_path: str,
+    unified: bool = False,
 ) -> int:
     if health(host, engine_port):
         return read_pid(layout) or 0
@@ -524,13 +550,14 @@ def _start_engine(
         host,
         engine_port,
         log_file,
+        home=layout.home if unified else None,
     )
     engine_pid = _spawn(argv, layout.log_dir / "server.console.log")
     paths.write_text_atomic(layout.pid_file, "%d\n" % engine_pid, mode=0o600)
     if not wait_healthy(host, engine_port, timeout=wait):
         detail = _log_tail(log_file)
         raise RuntimeError_(
-            "engine did not become healthy on %s:%d within %.0fs%s"
+            "server did not become healthy on %s:%d within %.0fs%s"
             % (host, engine_port, wait, ("\n" + detail) if detail else "")
         )
     return engine_pid
@@ -540,14 +567,16 @@ def start(layout: paths.Layout, state: Dict[str, Any], wait: float = 90.0) -> Tu
     layout.ensure()
     host = state.get("host", DEFAULT_HOST)
     port = int(state.get("port", DEFAULT_PORT))
-    engine_port = _engine_port(state)
+    unified = _is_unified_state(state)
+    engine_port = port if unified else _engine_port(state)
 
     if health(host, port):
-        pid = read_gateway_pid(layout)
+        pid = read_pid(layout) if unified else read_gateway_pid(layout)
+        if not pid and not unified:
+            pid = read_pid(layout)
         if pid and is_alive(pid):
-            if health(host, engine_port):
+            if unified or health(host, engine_port):
                 return True, "already running on %s:%d (pid %d)" % (host, port, pid)
-            # Gateway survived but the engine is gone: bring the engine back only.
             entry, python, stata_path = _validate_engine_inputs(layout, state)
             engine_pid = _start_engine(layout, state, host, engine_port, wait, entry, python, stata_path)
             return True, "gateway still on %s:%d (pid %d); engine restarted on :%d (pid %s)" % (
@@ -557,21 +586,33 @@ def start(layout: paths.Layout, state: Dict[str, Any], wait: float = 90.0) -> Tu
                 engine_port,
                 engine_pid,
             )
-        # Something answers, but it is not ours: report instead of pretending success.
         raise RuntimeError_(
             "another MCP service already answers on %s:%d and it was not started by "
             "this installation (no pid file at %s).\n"
             "      Use a free port (`install --port <N>`) or stop that service first."
-            % (host, port, layout.gateway_pid_file)
+            % (host, port, layout.pid_file if unified else layout.gateway_pid_file)
         )
 
     entry, python, stata_path = _validate_engine_inputs(layout, state)
-
-    # 1) engine (internal port)
     log_file = Path(state.get("log_file") or layout.log_file)
-    engine_pid = _start_engine(layout, state, host, engine_port, wait, entry, python, stata_path)
 
-    # 2) gateway (client-facing port)
+    if unified:
+        # Clean up any stale legacy gateway pid file from pre-1.4.0 installs.
+        if layout.gateway_pid_file.is_file():
+            try:
+                layout.gateway_pid_file.unlink()
+            except OSError:
+                pass
+        pid = _start_engine(layout, state, host, port, wait, entry, python, stata_path, unified=True)
+        for path in (log_file, layout.log_dir / "server.console.log"):
+            try:
+                os.chmod(str(path), 0o600)
+            except OSError:
+                pass
+        return True, "unified server on %s:%d (pid %s)" % (host, port, pid)
+
+    # Legacy dual-process fallback
+    engine_pid = _start_engine(layout, state, host, engine_port, wait, entry, python, stata_path, unified=False)
     try:
         gateway_pid = _spawn(gateway_argv(layout, python, host, port), layout.log_dir / "gateway.console.log")
     except OSError as exc:
@@ -579,7 +620,6 @@ def start(layout: paths.Layout, state: Dict[str, Any], wait: float = 90.0) -> Tu
     paths.write_text_atomic(layout.gateway_pid_file, "%d\n" % gateway_pid, mode=0o600)
 
     if wait_healthy(host, port, timeout=wait):
-        # Logs can contain data paths and Stata output: keep them owner-only.
         for path in (log_file, layout.log_dir / "server.console.log", layout.gateway_log_file):
             try:
                 os.chmod(str(path), 0o600)
@@ -707,23 +747,31 @@ def stop(layout: paths.Layout, state: Dict[str, Any], timeout: float = 10.0) -> 
 def status(layout: paths.Layout, state: Dict[str, Any]) -> Dict[str, Any]:
     host = state.get("host", DEFAULT_HOST)
     port = int(state.get("port", DEFAULT_PORT))
-    engine_port = _engine_port(state)
+    unified = _is_unified_state(state)
+    engine_port = port if unified else _engine_port(state)
     info = health(host, port, timeout=1.0) or {}
-    engine = health(host, engine_port, timeout=1.0) or {}
-    pid = read_gateway_pid(layout)
+    is_unified_live = unified or info.get("mode") == "unified"
+    engine = info if is_unified_live else (health(host, engine_port, timeout=1.0) or {})
+
+    server_pid = read_pid(layout)
+    gw_pid = read_gateway_pid(layout)
+    pid = server_pid if is_unified_live else gw_pid
     if not (pid and is_alive(pid)):
         pid = _health_gateway_pid(info)
-    engine_pid = read_pid(layout)
+    engine_pid = server_pid if (server_pid and is_alive(server_pid)) else pid
+
     return {
         "healthy": bool(info),
+        "mode": "unified" if is_unified_live else "dual",
         "health": info,
         "pid": pid if (pid and is_alive(pid)) else None,
         "host": host,
         "port": port,
         "engine": {
             "healthy": bool(engine),
-            "port": engine_port,
+            "port": port if is_unified_live else engine_port,
             "pid": engine_pid if (engine_pid and is_alive(engine_pid)) else None,
+            "unified": bool(is_unified_live),
             "health": engine,
         },
     }

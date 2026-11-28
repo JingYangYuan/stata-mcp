@@ -4,7 +4,7 @@
 
 # Stata-MCP
 
-面向本地 AI Agent 的跨平台 **Stata MCP** 通用部署套件与 **Stata MCP Studio** 桌面控制台（支持 macOS / Linux / Windows）。在客户端与 [hanlulong/stata-mcp](https://github.com/hanlulong/stata-mcp) 引擎之间架设独立本地网关（`127.0.0.1:4001` ⇄ `:4002`），提供 **17 个 MCP 工具**、零依赖代理免疫 stdio 桥接器、异步长任务单步落盘、精确到原文件行号的报错定位、反循环静态体检与离线 `.sthlp` 文档引擎，不耦合任何特定编辑器或 Agent 宿主。
+面向本地 AI Agent 的跨平台 **Stata MCP** 通用部署套件与 **Stata MCP Studio** 桌面控制台（支持 macOS / Linux / Windows）。将 [hanlulong/stata-mcp](https://github.com/hanlulong/stata-mcp)（MIT License，`v0.5.3`）核心引擎直接封装入安装包，与 17 工具本地网关**融合为单进程单端口服务（`127.0.0.1:4001`）**，提供零依赖代理免疫 stdio 桥接器、异步长任务单步落盘、精确到原文件行号的报错定位、反循环静态体检与离线 `.sthlp` 文档引擎，不耦合任何特定编辑器或 Agent 宿主。
 
 适用场景：长耗时 `.do` 回归与数据清洗的异步执行、逐行报错自动定位修复、编写代码前离线查验 Stata/SSC 语法、拦截低效观测值循环并自动改写为向量化写法、实时探查内存数据集与 `e()`/`r()`/`c()` 存储结果。
 
@@ -12,7 +12,7 @@
 - **不触碰他方配置**：默认仅输出或复制标准 JSON 配置片段，**绝不读取或改写其他产品的配置文件**；仅当显式传入 `--write-config PATH`（或在桌面端手动选择文件）时才合并单个条目，写前自动时间戳备份，遇到非法 JSON 直接拒绝。
 - **不硬编码机器信息**：仓库内无用户名、盘符或特定客户端路径；Stata 安装根目录、Python/uv、端口与状态目录全部自动发现或参数化。
 
-> 上游项目（MIT，Han Lulong 等）仅作为**服务端代码来源**：本仓库不 vendor、不 fork、不打补丁，安装时按需 clone 到本机私有目录（默认 `~/.stata-mcp/server`），也可通过 `--server-dir` 指定离线源码副本。
+> 仓库内已直接内置精简版上游核心服务端（`server/`，来自 [hanlulong/stata-mcp](https://github.com/hanlulong/stata-mcp) `v0.5.3`，MIT License）：**无需在安装时 `git clone` GitHub 源码**，同时仍保留 `--server-dir` / `--mirror` 参数以兼容自定义上游覆盖。
 
 ---
 
@@ -43,7 +43,7 @@
 核心运行时与分析约定：
 
 - **长任务不超时断流**：上游单次阻塞调用常被 MCP 客户端在 ~30s 截断；网关最多同步等待 `20s`（可配上限 `25s`），超时未完立即返回 `job_id`，后台继续运行（默认作业超时 `21600s` = 6 小时，可通过 `--default-timeout` 调整），每条 `. command` 实时落盘至 `~/.stata-mcp/jobs/<job_id>/journal.log` 与 `records.jsonl`（保留最近 200 个作业 / 7 天）。
-- **代理免疫与无黑框后台常驻**：stdio 桥接器直接通过标准库 `http.client` 访问 `127.0.0.1`，完全绕过 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`，杜绝本地代理（Clash / Surge / Mihomo 等）引发 `502 Bad Gateway`；Windows 后台双进程采用 `CREATE_NO_WINDOW` + Job Breakaway 与 Win32 PID 探活，避免弹出或残留控制台黑框。
+- **代理免疫与无黑框后台常驻**：stdio 桥接器直接通过标准库 `http.client` 访问 `127.0.0.1`，完全绕过 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`，杜绝本地代理（Clash / Surge / Mihomo 等）引发 `502 Bad Gateway`；Windows 后台融合进程采用 `CREATE_NO_WINDOW` + Job Breakaway 与 Win32 PID 探活，避免弹出或残留控制台黑框。
 
 ---
 
@@ -66,7 +66,7 @@
 > xattr -cr "/Applications/Stata MCP Studio.app"
 > ```
 
-打开应用后按界面 **三步向导** 即可完成部署：① 确认自动探测到的 Stata 根目录 → ② 点击「一键安装 / 重装」（已装实例升级脚本点 `refresh`） → ③ 启动双进程并点击「端到端自检 (`verify`)」。
+打开应用后按界面 **三步向导** 即可完成部署：① 确认自动探测到的 Stata 根目录（缺 Python / `uv` 时可直接点击内置**环境安装镜像**直达华为云/阿里云/官方下载页） → ② 选用可选 **PyPI 镜像加速源**（清华/阿里/中科大/腾讯/默认源）后点击「一键安装 / 重装」（已装实例升级点 `refresh`） → ③ 启动单端口融合服务并点击「端到端自检 (`verify`)」。
 
 ### 2. 命令行部署（CLI）
 
@@ -88,21 +88,21 @@ python install.py
 常用部署参数与日常运维命令：
 
 ```bash
-python3 install.py install --print-plan                         # 只打印计划，不下载、不写盘、不启动
+python3 install.py install --print-plan                                      # 只打印计划，不下载、不写盘、不启动
 python3 install.py install --stata-path /path/to/Stata --port 4001
-python3 install.py install --server-dir ~/src/stata-mcp         # 使用已有本地源码，完全离线
-python3 install.py install --mirror https://your-mirror.example/  # 网络受限时给 git 加镜像前缀
-python3 install.py install --venv /path/to/existing/venv        # 复用已有虚拟环境
-python3 install.py install --default-timeout 43200              # 自定义默认长任务超时（秒）
+python3 install.py install --pip-index https://pypi.tuna.tsinghua.edu.cn/simple  # 使用清华 PyPI 镜像安装依赖
+python3 install.py install --server-dir ~/src/stata-mcp                      # 可选：覆盖内置 server/，使用本地源码
+python3 install.py install --venv /path/to/existing/venv                     # 复用已有虚拟环境
+python3 install.py install --default-timeout 43200                           # 自定义默认长任务超时（秒）
 ```
 
 | 命令 | 作用 |
 |---|---|
-| `install` | 获取源码（或复用 `--server-dir`）、创建私有 `venv`、记录状态、生成启动器、启动引擎与网关并打印客户端配置 |
-| `refresh` | 已装实例原地升级：停止服务、重新拷贝 `bin/` 网关/桥接/分析脚本、更新 `state.json` 并重启（不 clone、不 pip） |
+| `install` | 部署内置 `server/` 源码（或 `--server-dir`）、创建私有 `venv`（支持 `--pip-index`）、启动单端口融合服务并打印客户端配置 |
+| `refresh` | 已装实例原地升级：停止服务、同步最新 `bin/` 与内置 `server/`、更新 `state.json` 为单端口模式并重启 |
 | `config` | 打印 / 落盘（`--emit`）/ 非破坏合并（`--write-config`）客户端配置；支持 `--transport stdio\|http`、`--root`、`--key`、`--timeout-ms` |
-| `start` / `stop` | 后台启动 / 停止网关与引擎（幂等） |
-| `status` | 安装摘要 + 网关与引擎双端口健康检查（支持 `--json`） |
+| `start` / `stop` | 后台启动 / 停止单端口融合服务（幂等） |
+| `status` | 安装摘要 + 单端口 `/health` 健康检查（支持 `--json`） |
 | `verify` | 经 stdio 桥接跑端到端自检：校验 ≥17 工具清单、`display 1+1`、`stata_job_list` 与 `stata_help("regress")` |
 | `doctor` | 环境诊断（OS、Python、git/uv、Stata 候选、双进程健康、jobs 目录统计与 `STATA_MCP_*` 变量，支持 `--json`） |
 | `privacy` | 打印完整数据流与文件触碰声明 |
@@ -147,20 +147,20 @@ python3 install.py config --write-config /path/to/client.json             # 原�
 ### 运行时架构
 
 ```text
-MCP 客户端 ──stdio──> bin/stata-mcp-bridge.py ──HTTP(127.0.0.1:4001)──> 网关 stata-mcp-jobs.py (17 工具)
-                                │                                                  │
-                                │ (未运行时自动拉起)                                └──HTTP(127.0.0.1:4002)──> 上游引擎 ──> 本地 Stata
+MCP 客户端 ──stdio──> bin/stata-mcp-bridge.py ──HTTP(127.0.0.1:4001)──> 单进程融合服务
+                                │                                        ├─ /mcp-streamable: 17 工具网关 (stata-mcp-jobs.py)
+                                │ (未运行时自动拉起)                      └─ 内部路由 + Stata worker (server/src/stata_mcp_server.py)
                                 v
                        bin/stata-mcp-start.py
 
-支持 Streamable HTTP 的客户端 ──HTTP(127.0.0.1:4001/mcp-streamable)────────────────┘
+支持 Streamable HTTP 的客户端 ──HTTP(127.0.0.1:4001/mcp-streamable)─────┘
 ```
 
 ### Stata MCP Studio 桌面端工作区（6 大页面）
 
 | 工作区 | 提供的能力 |
 |---|---|
-| 概览部署 | 三步向导：自动扫描 Stata 候选与 Python/uv/git 环境、一键安装/`refresh`、端口冲突检测、双进程启停与 `verify` 实时终端流 |
+| 概览部署 | 三步向导：自动扫描 Stata 与 Python/uv 环境、一键直达环境安装镜像网站、PyPI 镜像加速选择与一键部署、单端口启停与 `verify` 实时终端流 |
 | 客户端接入 | 一键切换 `stdio` / `Streamable HTTP`、自定义根键/条目名/超时、Dry-Run 预览与安全合并写入、17 工具分类检索卡片 |
 | 作业与报错 | Master-Detail 查看实时 `journal.log`、一键停止运行中作业；失败作业高亮原 `.do` 报错行号、源码上下文、`r(NNN)` 建议并直跳 Help |
 | Help 速查 | 离线检索与渲染本机 Stata/SSC `.sthlp`，支持别名解析、章节过滤、相关主题（Also see）与可点击模糊搜索列表 |
@@ -222,8 +222,8 @@ python3 install.py verify                             # 经 stdio 桥接完整�
 
 - **开着 Clash / Surge / Mihomo 等代理时客户端报 `502`**：使用默认的 `stdio` 配置（经 `stata-mcp-bridge.py` 直连回环口，永不走代理）；若必须使用 HTTP 模式，请将 `127.0.0.1` 与 `localhost` 加入代理绕过列表。
 - **未找到 Stata 或选中了旧版本**：通过 `python3 install.py doctor` 查看全部探测候选，在安装或桌面端向导中手动指定 Stata 安装根目录（例如 `/Applications/StataNow` 或 `E:\Stata19`）。
-- **端口 `4001` 已被其他服务占用**：传入 `--port 4011`（引擎自动使用 `4012`），或在桌面端出现端口冲突提示时点击「改用端口 4011」。
-- **GitHub 克隆源码超时或受限**：传 `--mirror https://your-mirror.example/` 前缀，或先手动下载上游源码后用 `--server-dir <路径>` 离线部署。
+- **端口 `4001` 已被其他服务占用**：传入 `--port 4011`，或在桌面端出现端口冲突提示时点击「改用端口 4011」（单端口模式不再占用 `4002`）。
+- **内网或下载 Python 依赖较慢**：在桌面端第 2 步直接点击清华/阿里云/中科大/腾讯云 PyPI 镜像按钮，或命令行传入 `--pip-index https://pypi.tuna.tsinghua.edu.cn/simple`；缺失 Python/`uv` 时可在桌面端第 1 步点击环境镜像按钮直达下载。
 - **排查后台运行异常**：依次检查 `python3 install.py doctor`，以及 `~/.stata-mcp/logs/gateway.log`、`~/.stata-mcp/logs/server.log` 与 `*.console.log`；更多排查步骤见 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)。
 
 ---
@@ -282,4 +282,4 @@ stata-mcp/
 
 本仓库（部署器、网关、分析引擎与桌面控制台）采用 [MIT License](LICENSE)，Copyright (c) 2026 JingYangYuan。
 
-上游服务端代码**不在本仓库内**：安装时从 [hanlulong/stata-mcp](https://github.com/hanlulong/stata-mcp)（MIT License，版权归 Han Lulong 等作者所有）clone 到本机私有目录或复用本地副本，使用与再分发请遵循其许可证。
+内置 `server/` 核心服务端源码来自 [hanlulong/stata-mcp](https://github.com/hanlulong/stata-mcp) `v0.5.3`（MIT License，版权归 Han Lulong 等作者所有），其原始许可证保留于 [server/LICENSE](server/LICENSE)。

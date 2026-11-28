@@ -182,15 +182,29 @@ def write_pid(path, pid):
         pass
 
 
+def _is_unified(state):
+    mode = (state.get("mode") or "").strip().lower()
+    if mode == "unified":
+        return True
+    try:
+        p = int(state.get("port") or 4001)
+        ep = int(state.get("engine_port") or p)
+        return p == ep
+    except (TypeError, ValueError):
+        return False
+
+
 def ports(state, host, port_override=None):
     port = int(port_override or os.environ.get("STATA_MCP_PORT") or state.get("port") or 4001)
+    if _is_unified(state):
+        return port, port
     engine = int(state.get("engine_port") or port + 1)
     if engine == port:
         engine = port + 1
     return port, engine
 
 
-def engine_argv(state, host, engine_port, log_file):
+def engine_argv(state, home, host, engine_port, log_file, unified=False):
     entry = state.get("server_entry")
     python = state.get("python") or sys.executable
     stata_path = state.get("stata_path")
@@ -214,6 +228,8 @@ def engine_argv(state, host, engine_port, log_file):
     edition = state.get("stata_edition")
     if edition in ("mp", "se", "be"):
         argv += ["--stata-edition", edition]
+    if unified:
+        argv += ["--gateway-home", home]
     return argv
 
 
@@ -277,9 +293,25 @@ def spawn(argv, console_log):
 
 def start(home, state, host, port_override, wait, foreground):
     port, engine_port = ports(state, host, port_override)
+    unified = _is_unified(state)
     log_file = state.get("log_file") or os.path.join(home, "logs", "server.log")
     engine_pid_file = os.path.join(home, "run", "server.pid")
     gateway_pid_file = os.path.join(home, "run", "jobs.pid")
+
+    if unified:
+        if health(host, port):
+            return 0
+        if foreground:
+            argv = engine_argv(state, home, host, port, log_file, unified=True)
+            os.execv(argv[0], argv)
+        process = spawn(
+            engine_argv(state, home, host, port, log_file, unified=True),
+            os.path.join(home, "logs", "server.console.log"),
+        )
+        write_pid(engine_pid_file, process.pid)
+        if not wait_healthy(host, port, wait):
+            raise SystemExit("stata-mcp-start: unified server did not become healthy on %s:%d" % (host, port))
+        return 0
 
     engine_ok = bool(health(host, engine_port))
     gateway_ok = bool(health(host, port))
@@ -287,7 +319,7 @@ def start(home, state, host, port_override, wait, foreground):
         return 0
 
     if not engine_ok:
-        process = spawn(engine_argv(state, host, engine_port, log_file), os.path.join(home, "logs", "server.console.log"))
+        process = spawn(engine_argv(state, home, host, engine_port, log_file, unified=False), os.path.join(home, "logs", "server.console.log"))
         write_pid(engine_pid_file, process.pid)
         if not wait_healthy(host, engine_port, wait):
             raise SystemExit("stata-mcp-start: engine did not become healthy on %s:%d" % (host, engine_port))

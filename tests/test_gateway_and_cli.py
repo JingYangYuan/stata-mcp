@@ -114,6 +114,38 @@ class CliAndRuntimeTests(unittest.TestCase):
             self.assertEqual(list(Path(tmp).glob("server.staging-*")), [])
             self.assertEqual(list(Path(tmp).glob("server.old-*")), [])
 
+    def test_bundled_server_present_and_stages_without_git(self):
+        bundled = source.find_bundled(ROOT)
+        self.assertIsNotNone(bundled)
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp) / "server"
+            built = source.stage_bundled(bundled.root, dest)
+            self.assertEqual(built.origin, "bundled")
+            self.assertTrue(built.entry.is_file())
+            self.assertIsNotNone(built.requirements)
+            self.assertTrue(built.requirements.is_file())
+            self.assertTrue((dest / "LICENSE").is_file())
+
+    def test_unified_server_argv_includes_gateway_home(self):
+        self.assertEqual(runtime.DEFAULT_ENGINE_PORT, 4001)
+        argv = runtime.server_argv(
+            "/usr/bin/python3",
+            Path("/tmp/server/src/stata_mcp_server.py"),
+            "/Applications/StataNow",
+            "mp",
+            "127.0.0.1",
+            4001,
+            Path("/tmp/server.log"),
+            home=Path("/tmp/home"),
+        )
+        self.assertIn("--gateway-home", argv)
+        self.assertIn("/tmp/home", argv)
+
+    def test_install_parser_accepts_pip_index(self):
+        parser = cli.build_parser()
+        args = parser.parse_args(["install", "--pip-index", "https://pypi.tuna.tsinghua.edu.cn/simple"])
+        self.assertEqual(args.pip_index, "https://pypi.tuna.tsinghua.edu.cn/simple")
+
 
 class GatewayJobErrorTests(unittest.TestCase):
     def test_job_consumes_r_error_and_populates_error_diagnosis(self):

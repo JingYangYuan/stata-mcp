@@ -342,6 +342,7 @@ export class CoreService {
         args.push("-y");
         if (opts.stataPath) args.push("--stata-path", opts.stataPath);
         if (opts.port) args.push("--port", String(opts.port));
+        if (opts.pipIndex) args.push("--pip-index", opts.pipIndex);
         if (opts.mirror) args.push("--mirror", opts.mirror);
         if (opts.defaultTimeout) args.push("--default-timeout", String(opts.defaultTimeout));
         if (opts.refresh) args.push("--refresh");
@@ -467,7 +468,7 @@ export class CoreService {
   async cancelJob(jobId) {
     const state = this._loadState();
     const host = state.host || "127.0.0.1";
-    const enginePort = Number(state.engine_port || 4002);
+    const enginePort = state.mode === "unified" ? Number(state.port || 4001) : Number(state.engine_port || state.port || 4001);
     return new Promise((resolve) => {
       const req = http.request(
         { host, port: enginePort, path: "/stop_execution", method: "POST", timeout: 5000 },

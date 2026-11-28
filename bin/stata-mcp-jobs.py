@@ -38,6 +38,7 @@ reads or writes another application's configuration files.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import http.client
 import json
 import logging
@@ -58,7 +59,7 @@ if _BIN_DIR not in sys.path:
 
 import stata_mcp_analysis  # noqa: E402
 
-GATEWAY_VERSION = "1.3.0"
+GATEWAY_VERSION = "1.4.0"
 TOOLS_COUNT = 17
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 4001
@@ -135,10 +136,12 @@ class Config(object):
         self.selection_dir = os.path.join(self.home, "cache", "selection")
         self.engine_log_file = state.get("log_file") or os.path.join(self.home, "logs", "server.log")
         self.stata_path = state.get("stata_path") or ""
+        self.unified = bool(self.engine_port == self.port)
         self.version = GATEWAY_VERSION
 
     def describe(self):
-        return "gateway=:%d engine=:%d home=%s" % (self.port, self.engine_port, self.home)
+        mode = "unified" if self.unified else "dual"
+        return "%s port=:%d engine=:%d home=%s" % (mode, self.port, self.engine_port, self.home)
 
 
 # ---------------------------------------------------------------------------
@@ -1027,7 +1030,7 @@ def _format_table_preview(columns, rows, max_rows=20):
 # ---------------------------------------------------------------------------
 # MCP server
 # ---------------------------------------------------------------------------
-def build_server(cfg):
+def build_gateway(cfg):
     from mcp.server.fastmcp import FastMCP
 
     mcp = FastMCP(
@@ -1090,7 +1093,7 @@ def build_server(cfg):
             "[ERROR LOCATION] line numbers. Pass lint=True to pre-check anti-loop/syntax issues."
         ),
     )
-    def stata_run_file(
+    async def stata_run_file(
         file_path: str,
         timeout: float = 0,
         working_dir: str = "",
@@ -1098,43 +1101,46 @@ def build_server(cfg):
         wait_seconds: float = -1,
         lint: bool = False,
     ) -> str:
-        target = os.path.abspath(os.path.expanduser(file_path or ""))
-        if not target or not os.path.isfile(target):
-            return "Error: file not found: %s" % (file_path or "<empty>")
-        if not target.lower().endswith(".do"):
-            return "Error: %s is not a .do file" % target
-        lint_banner = ""
-        if lint:
-            try:
-                src_text = open(target, "r", encoding="utf-8", errors="replace").read()
-                lint_res = stata_mcp_analysis.lint_do_code(src_text, file_path=target)
-                high_issues = [i for i in lint_res["issues"] if i["severity"] in ("error", "high")]
-                if high_issues:
-                    preview = "\n".join(
-                        "  - L%d [%s] %s: %s (suggestion: %s)"
-                        % (i["line"], i["severity"], i["rule_id"], i["message"], i["suggestion"])
-                        for i in high_issues[:5]
-                    )
-                    lint_banner = "[PRE-RUN LINT WARNINGS (%s)]\n%s\n\n" % (lint_res["summary"], preview)
-            except OSError:
-                pass
-        wait = cfg.sync_wait if wait_seconds is None or wait_seconds < 0 else wait_seconds
-        job = jobs.start("file", target, working_dir, session_id, timeout, source_file=target, line_offset=0)
-        job.wait(min(max(wait, 0.0), MAX_SYNC_WAIT))
-        if job.status == RUNNING:
-            payload = _wait_hint(job)
-            if lint_banner:
-                payload["lint_warnings"] = lint_banner.strip()
-            return _dumps(payload)
-        body = job.result_text()
-        return "%s>>> %s (job %s, %s in %.1fs)\n%s" % (
-            lint_banner,
-            target,
-            job.job_id,
-            job.status,
-            job.elapsed(),
-            body,
-        )
+        def _run_sync():
+            target = os.path.abspath(os.path.expanduser(file_path or ""))
+            if not target or not os.path.isfile(target):
+                return "Error: file not found: %s" % (file_path or "<empty>")
+            if not target.lower().endswith(".do"):
+                return "Error: %s is not a .do file" % target
+            lint_banner = ""
+            if lint:
+                try:
+                    src_text = open(target, "r", encoding="utf-8", errors="replace").read()
+                    lint_res = stata_mcp_analysis.lint_do_code(src_text, file_path=target)
+                    high_issues = [i for i in lint_res["issues"] if i["severity"] in ("error", "high")]
+                    if high_issues:
+                        preview = "\n".join(
+                            "  - L%d [%s] %s: %s (suggestion: %s)"
+                            % (i["line"], i["severity"], i["rule_id"], i["message"], i["suggestion"])
+                            for i in high_issues[:5]
+                        )
+                        lint_banner = "[PRE-RUN LINT WARNINGS (%s)]\n%s\n\n" % (lint_res["summary"], preview)
+                except OSError:
+                    pass
+            wait = cfg.sync_wait if wait_seconds is None or wait_seconds < 0 else wait_seconds
+            job = jobs.start("file", target, working_dir, session_id, timeout, source_file=target, line_offset=0)
+            job.wait(min(max(wait, 0.0), MAX_SYNC_WAIT))
+            if job.status == RUNNING:
+                payload = _wait_hint(job)
+                if lint_banner:
+                    payload["lint_warnings"] = lint_banner.strip()
+                return _dumps(payload)
+            body = job.result_text()
+            return "%s>>> %s (job %s, %s in %.1fs)\n%s" % (
+                lint_banner,
+                target,
+                job.job_id,
+                job.status,
+                job.elapsed(),
+                body,
+            )
+
+        return await asyncio.to_thread(_run_sync)
 
     @mcp.tool(
         name="stata_run_selection",
@@ -1143,31 +1149,34 @@ def build_server(cfg):
             "long selections return a job_id that you follow with stata_job_tail. Failures include [ERROR LOCATION]."
         ),
     )
-    def stata_run_selection(
+    async def stata_run_selection(
         selection: str,
         timeout: float = 0,
         working_dir: str = "",
         session_id: str = "",
         wait_seconds: float = -1,
     ) -> str:
-        code = selection or ""
-        if not code.strip():
-            return "Error: selection is empty"
-        staging = cfg.selection_dir
-        os.makedirs(staging, exist_ok=True)
-        path = os.path.join(staging, "selection-%s.do" % uuid.uuid4().hex[:8])
-        try:
-            with open(path, "w", encoding="utf-8") as handle:
-                handle.write(code if code.endswith("\n") else code + "\n")
-        except OSError as exc:
-            return "Error: cannot stage the selection: %s" % exc
-        wait = cfg.sync_wait if wait_seconds is None or wait_seconds < 0 else wait_seconds
-        job = jobs.start("selection", path, working_dir, session_id, timeout, source_file=path, line_offset=0)
-        job.wait(min(max(wait, 0.0), MAX_SYNC_WAIT))
-        if job.status == RUNNING:
-            return _dumps(_wait_hint(job))
-        body = job.result_text()
-        return ">>> selection (job %s, %s in %.1fs)\n%s" % (job.job_id, job.status, job.elapsed(), body)
+        def _run_sync():
+            code = selection or ""
+            if not code.strip():
+                return "Error: selection is empty"
+            staging = cfg.selection_dir
+            os.makedirs(staging, exist_ok=True)
+            path = os.path.join(staging, "selection-%s.do" % uuid.uuid4().hex[:8])
+            try:
+                with open(path, "w", encoding="utf-8") as handle:
+                    handle.write(code if code.endswith("\n") else code + "\n")
+            except OSError as exc:
+                return "Error: cannot stage the selection: %s" % exc
+            wait = cfg.sync_wait if wait_seconds is None or wait_seconds < 0 else wait_seconds
+            job = jobs.start("selection", path, working_dir, session_id, timeout, source_file=path, line_offset=0)
+            job.wait(min(max(wait, 0.0), MAX_SYNC_WAIT))
+            if job.status == RUNNING:
+                return _dumps(_wait_hint(job))
+            body = job.result_text()
+            return ">>> selection (job %s, %s in %.1fs)\n%s" % (job.job_id, job.status, job.elapsed(), body)
+
+        return await asyncio.to_thread(_run_sync)
 
     @mcp.tool(
         name="stata_run_lines",
@@ -1176,7 +1185,7 @@ def build_server(cfg):
             "Useful for fast iterative re-running after fixing an error; error line numbers map back to the original file."
         ),
     )
-    def stata_run_lines(
+    async def stata_run_lines(
         file_path: str,
         start_line: int,
         end_line: int,
@@ -1185,54 +1194,57 @@ def build_server(cfg):
         session_id: str = "",
         wait_seconds: float = -1,
     ) -> str:
-        target = os.path.abspath(os.path.expanduser(file_path or ""))
-        if not target or not os.path.isfile(target):
-            return "Error: file not found: %s" % (file_path or "<empty>")
-        try:
-            with open(target, "r", encoding="utf-8", errors="replace") as handle:
-                all_lines = handle.read().splitlines()
-        except OSError as exc:
-            return "Error: cannot read %s: %s" % (target, exc)
-        total = len(all_lines)
-        if total == 0:
-            return "Error: %s is empty" % target
-        s_line = int(start_line)
-        e_line = int(end_line)
-        if s_line < 1 or e_line < s_line or s_line > total:
-            return "Error: invalid line range %d..%d for %s (%d lines)" % (s_line, e_line, target, total)
-        e_line = min(e_line, total)
-        snippet = "\n".join(all_lines[s_line - 1 : e_line]) + "\n"
-        staging = cfg.selection_dir
-        os.makedirs(staging, exist_ok=True)
-        staged = os.path.join(staging, "lines-%d-%d-%s.do" % (s_line, e_line, uuid.uuid4().hex[:8]))
-        try:
-            with open(staged, "w", encoding="utf-8") as handle:
-                handle.write(snippet)
-        except OSError as exc:
-            return "Error: cannot stage line slice: %s" % exc
-        wait = cfg.sync_wait if wait_seconds is None or wait_seconds < 0 else wait_seconds
-        job = jobs.start(
-            "lines",
-            staged,
-            working_dir,
-            session_id,
-            timeout,
-            source_file=target,
-            line_offset=s_line - 1,
-        )
-        job.wait(min(max(wait, 0.0), MAX_SYNC_WAIT))
-        if job.status == RUNNING:
-            return _dumps(_wait_hint(job))
-        body = job.result_text()
-        return ">>> %s:%d-%d (job %s, %s in %.1fs)\n%s" % (
-            target,
-            s_line,
-            e_line,
-            job.job_id,
-            job.status,
-            job.elapsed(),
-            body,
-        )
+        def _run_sync():
+            target = os.path.abspath(os.path.expanduser(file_path or ""))
+            if not target or not os.path.isfile(target):
+                return "Error: file not found: %s" % (file_path or "<empty>")
+            try:
+                with open(target, "r", encoding="utf-8", errors="replace") as handle:
+                    all_lines = handle.read().splitlines()
+            except OSError as exc:
+                return "Error: cannot read %s: %s" % (target, exc)
+            total = len(all_lines)
+            if total == 0:
+                return "Error: %s is empty" % target
+            s_line = int(start_line)
+            e_line = int(end_line)
+            if s_line < 1 or e_line < s_line or s_line > total:
+                return "Error: invalid line range %d..%d for %s (%d lines)" % (s_line, e_line, target, total)
+            e_line = min(e_line, total)
+            snippet = "\n".join(all_lines[s_line - 1 : e_line]) + "\n"
+            staging = cfg.selection_dir
+            os.makedirs(staging, exist_ok=True)
+            staged = os.path.join(staging, "lines-%d-%d-%s.do" % (s_line, e_line, uuid.uuid4().hex[:8]))
+            try:
+                with open(staged, "w", encoding="utf-8") as handle:
+                    handle.write(snippet)
+            except OSError as exc:
+                return "Error: cannot stage line slice: %s" % exc
+            wait = cfg.sync_wait if wait_seconds is None or wait_seconds < 0 else wait_seconds
+            job = jobs.start(
+                "lines",
+                staged,
+                working_dir,
+                session_id,
+                timeout,
+                source_file=target,
+                line_offset=s_line - 1,
+            )
+            job.wait(min(max(wait, 0.0), MAX_SYNC_WAIT))
+            if job.status == RUNNING:
+                return _dumps(_wait_hint(job))
+            body = job.result_text()
+            return ">>> %s:%d-%d (job %s, %s in %.1fs)\n%s" % (
+                target,
+                s_line,
+                e_line,
+                job.job_id,
+                job.status,
+                job.elapsed(),
+                body,
+            )
+
+        return await asyncio.to_thread(_run_sync)
 
     @mcp.tool(
         name="stata_job_status",
@@ -1241,11 +1253,14 @@ def build_server(cfg):
             "current step, error_code/error_line if failed, and log record count. wait_seconds blocks up to 25s."
         ),
     )
-    def stata_job_status(job_id: str, wait_seconds: float = 0) -> str:
-        job = jobs.get(job_id)
-        if job is None:
-            return "Error: unknown job %r (use stata_job_list to see recent jobs)" % job_id
-        return _dumps(job.summary(wait_seconds))
+    async def stata_job_status(job_id: str, wait_seconds: float = 0) -> str:
+        def _run_sync():
+            job = jobs.get(job_id)
+            if job is None:
+                return "Error: unknown job %r (use stata_job_list to see recent jobs)" % job_id
+            return _dumps(job.summary(wait_seconds))
+
+        return await asyncio.to_thread(_run_sync)
 
     @mcp.tool(
         name="stata_job_tail",
@@ -1255,45 +1270,51 @@ def build_server(cfg):
             "lines. Use next_offset from the reply as the next offset."
         ),
     )
-    def stata_job_tail(job_id: str, offset: int = 0, limit: int = 200, mode: str = "steps") -> str:
-        job = jobs.get(job_id)
-        if job is None:
-            return "Error: unknown job %r (use stata_job_list to see recent jobs)" % job_id
-        payload = _tail_payload(job, offset, limit, mode if mode in ("steps", "full") else "steps")
-        payload["journal"] = getattr(job, "journal_path", "")
-        return _dumps(payload)
+    async def stata_job_tail(job_id: str, offset: int = 0, limit: int = 200, mode: str = "steps") -> str:
+        def _run_sync():
+            job = jobs.get(job_id)
+            if job is None:
+                return "Error: unknown job %r (use stata_job_list to see recent jobs)" % job_id
+            payload = _tail_payload(job, offset, limit, mode if mode in ("steps", "full") else "steps")
+            payload["journal"] = getattr(job, "journal_path", "")
+            return _dumps(payload)
+
+        return await asyncio.to_thread(_run_sync)
 
     @mcp.tool(
         name="stata_job_list",
         description="List recent Stata jobs with their status, step number, error_line (if failed) and elapsed time.",
     )
-    def stata_job_list(limit: int = 20) -> str:
-        return _dumps({"jobs": jobs.list(limit=limit)})
+    async def stata_job_list(limit: int = 20) -> str:
+        return await asyncio.to_thread(lambda: _dumps({"jobs": jobs.list(limit=limit)}))
 
     @mcp.tool(
         name="stata_job_cancel",
         description="Stop a running Stata job (sends the engine's stop request) and report its status.",
     )
-    def stata_job_cancel(job_id: str) -> str:
-        job = jobs.get(job_id)
-        if job is None:
-            return "Error: unknown job %r" % job_id
-        if job.status != RUNNING:
-            return _dumps(job.summary())
-        if isinstance(job, Job):
-            job._cancel_requested = True
-        try:
-            result = engine_stop(cfg, getattr(job, "session_id", ""))
-        except EngineError as exc:
-            return "Error: %s" % exc
-        deadline = time.time() + MAX_SYNC_WAIT
-        while time.time() < deadline and job.status == RUNNING:
-            time.sleep(0.2)
-        if job.status == RUNNING and isinstance(job, Job):
-            job._finish(CANCELLED, "stop requested by the client")
-        payload = job.summary()
-        payload["engine"] = result
-        return _dumps(payload)
+    async def stata_job_cancel(job_id: str) -> str:
+        def _run_sync():
+            job = jobs.get(job_id)
+            if job is None:
+                return "Error: unknown job %r" % job_id
+            if job.status != RUNNING:
+                return _dumps(job.summary())
+            if isinstance(job, Job):
+                job._cancel_requested = True
+            try:
+                result = engine_stop(cfg, getattr(job, "session_id", ""))
+            except EngineError as exc:
+                return "Error: %s" % exc
+            deadline = time.time() + MAX_SYNC_WAIT
+            while time.time() < deadline and job.status == RUNNING:
+                time.sleep(0.2)
+            if job.status == RUNNING and isinstance(job, Job):
+                job._finish(CANCELLED, "stop requested by the client")
+            payload = job.summary()
+            payload["engine"] = result
+            return _dumps(payload)
+
+        return await asyncio.to_thread(_run_sync)
 
     @mcp.tool(
         name="stata_session",
@@ -1302,17 +1323,20 @@ def build_server(cfg):
             "action='destroy' with session_id stops one. Parallel jobs need distinct session ids."
         ),
     )
-    def stata_session(action: str = "list", session_id: str = "") -> str:
-        parameters = {"action": action or "list"}
-        if session_id:
-            parameters["session_id"] = session_id
-        try:
-            payload = engine_post_json(cfg, "/v1/tools", {"tool": "stata_session", "parameters": parameters}, timeout=60.0)
-        except EngineError as exc:
-            return "Error: %s" % exc
-        if payload.get("status") == "success":
-            return str(payload.get("result", ""))
-        return "Error: %s" % payload.get("message", "unknown engine error")
+    async def stata_session(action: str = "list", session_id: str = "") -> str:
+        def _run_sync():
+            parameters = {"action": action or "list"}
+            if session_id:
+                parameters["session_id"] = session_id
+            try:
+                payload = engine_post_json(cfg, "/v1/tools", {"tool": "stata_session", "parameters": parameters}, timeout=60.0)
+            except EngineError as exc:
+                return "Error: %s" % exc
+            if payload.get("status") == "success":
+                return str(payload.get("result", ""))
+            return "Error: %s" % payload.get("message", "unknown engine error")
+
+        return await asyncio.to_thread(_run_sync)
 
     @mcp.tool(
         name="stata_help",
@@ -1322,50 +1346,54 @@ def build_server(cfg):
             "('syntax', 'options', 'examples', 'results', 'description') to retrieve a focused section."
         ),
     )
-    def stata_help(topic: str, section: str = "", max_chars: int = 16000) -> str:
-        if not topic or not topic.strip():
-            return "Error: topic is required"
-        local = stata_mcp_analysis.resolve_help(
-            topic,
-            stata_path=cfg.stata_path,
-            section=section,
-            max_chars=max_chars,
-        )
-        if local.get("found"):
-            header = "Help: %s (resolved: %s, source: %s)" % (
-                local["topic"],
-                local["resolved_topic"],
-                local.get("source", "local"),
+    async def stata_help(topic: str, section: str = "", max_chars: int = 16000) -> str:
+        def _run_sync():
+            if not topic or not topic.strip():
+                return "Error: topic is required"
+            local = stata_mcp_analysis.resolve_help(
+                topic,
+                stata_path=cfg.stata_path,
+                section=section,
+                max_chars=max_chars,
             )
-            sections_line = "Sections: " + ", ".join(local.get("sections_available") or [])
-            see_line = ("Also see: " + ", ".join(local["also_see"][:8])) if local.get("also_see") else ""
-            parts = [header, sections_line]
-            if see_line:
-                parts.append(see_line)
-            parts.append("-" * 60)
-            parts.append(local["content"])
-            return "\n".join(parts)
+            if local.get("found"):
+                header = "Help: %s (resolved: %s, source: %s)" % (
+                    local["topic"],
+                    local["resolved_topic"],
+                    local.get("source", "local"),
+                )
+                sections_line = "Sections: " + ", ".join(local.get("sections_available") or [])
+                see_line = ("Also see: " + ", ".join(local["also_see"][:8])) if local.get("also_see") else ""
+                parts = [header, sections_line]
+                if see_line:
+                    parts.append(see_line)
+                parts.append("-" * 60)
+                parts.append(local["content"])
+                return "\n".join(parts)
 
-        # Fallback to upstream engine /help endpoint for adopath locations outside standard dirs
-        clean = re.sub(r"\s+", "_", topic.strip().lstrip("#").split(",")[0].strip())
-        if re.match(r"^[A-Za-z0-9_.\-]+$", clean):
-            try:
-                status, body = engine_get_text(cfg, "/help?" + urlencode({"topic": clean, "format": "text"}), timeout=30.0)
-                if status == 200 and body.strip():
-                    limit = max(500, min(int(max_chars or 16000), 60000))
-                    if len(body) > limit:
-                        body = body[:limit] + "\n\n… (truncated)"
-                    return "Help: %s (source: engine /help)\n%s\n%s" % (clean, "-" * 60, body)
-            except EngineError:
-                pass
-        return "Help not found for %r. Try `stata_search_help(query=%r)`." % (topic, topic)
+            clean = re.sub(r"\s+", "_", topic.strip().lstrip("#").split(",")[0].strip())
+            if re.match(r"^[A-Za-z0-9_.\-]+$", clean):
+                try:
+                    status, body = engine_get_text(cfg, "/help?" + urlencode({"topic": clean, "format": "text"}), timeout=30.0)
+                    if status == 200 and body.strip():
+                        limit = max(500, min(int(max_chars or 16000), 60000))
+                        if len(body) > limit:
+                            body = body[:limit] + "\n\n… (truncated)"
+                        return "Help: %s (source: engine /help)\n%s\n%s" % (clean, "-" * 60, body)
+                except EngineError:
+                    pass
+            return "Help not found for %r. Try `stata_search_help(query=%r)`." % (topic, topic)
+
+        return await asyncio.to_thread(_run_sync)
 
     @mcp.tool(
         name="stata_search_help",
         description="Search installed Stata base and SSC/plus help files and command aliases by keyword.",
     )
-    def stata_search_help(query: str, limit: int = 20) -> str:
-        return _dumps(stata_mcp_analysis.search_help(query, stata_path=cfg.stata_path, limit=limit))
+    async def stata_search_help(query: str, limit: int = 20) -> str:
+        return await asyncio.to_thread(
+            lambda: _dumps(stata_mcp_analysis.search_help(query, stata_path=cfg.stata_path, limit=limit))
+        )
 
     @mcp.tool(
         name="stata_which",
@@ -1374,32 +1402,35 @@ def build_server(cfg):
             "installed, resolve aliases (e.g. 'reg' -> 'regress'), and return its file path and version header."
         ),
     )
-    def stata_which(command: str, session_id: str = "") -> str:
-        cmd = (command or "").strip().split()[0] if command else ""
-        if not cmd or not re.match(r"^[A-Za-z0-9_]+$", cmd):
-            return "Error: command must be a valid Stata identifier (letters, digits, underscore)"
-        local = stata_mcp_analysis.which_local(cmd, stata_path=cfg.stata_path)
-        resolved = local.get("resolved_command") or cmd
-        live_output = ""
-        try:
-            job = _run_quick_selection(jobs, cfg, "capture noisily which %s" % resolved, session_id=session_id, timeout=15.0)
-            if job.status != RUNNING:
-                live_output = job.result_text()
-        except Exception:
+    async def stata_which(command: str, session_id: str = "") -> str:
+        def _run_sync():
+            cmd = (command or "").strip().split()[0] if command else ""
+            if not cmd or not re.match(r"^[A-Za-z0-9_]+$", cmd):
+                return "Error: command must be a valid Stata identifier (letters, digits, underscore)"
+            local = stata_mcp_analysis.which_local(cmd, stata_path=cfg.stata_path)
+            resolved = local.get("resolved_command") or cmd
             live_output = ""
-        installed = local.get("found") or ("built-in" in live_output.lower()) or (".ado" in live_output.lower())
-        payload = {
-            "command": cmd,
-            "resolved_command": resolved,
-            "installed": bool(installed),
-            "local_lookup": local,
-            "stata_which_output": live_output,
-        }
-        if installed:
-            payload["next_step"] = "Call `stata_help(topic=%r, section='syntax')` before coding." % resolved
-        else:
-            payload["hint"] = "Not installed. Try `ssc install %s` or `stata_search_help(query=%r)`." % (resolved, cmd)
-        return _dumps(payload)
+            try:
+                job = _run_quick_selection(jobs, cfg, "capture noisily which %s" % resolved, session_id=session_id, timeout=15.0)
+                if job.status != RUNNING:
+                    live_output = job.result_text()
+            except Exception:
+                live_output = ""
+            installed = local.get("found") or ("built-in" in live_output.lower()) or (".ado" in live_output.lower())
+            payload = {
+                "command": cmd,
+                "resolved_command": resolved,
+                "installed": bool(installed),
+                "local_lookup": local,
+                "stata_which_output": live_output,
+            }
+            if installed:
+                payload["next_step"] = "Call `stata_help(topic=%r, section='syntax')` before coding." % resolved
+            else:
+                payload["hint"] = "Not installed. Try `ssc install %s` or `stata_search_help(query=%r)`." % (resolved, cmd)
+            return _dumps(payload)
+
+        return await asyncio.to_thread(_run_sync)
 
     @mcp.tool(
         name="stata_diagnose_error",
@@ -1409,65 +1440,68 @@ def build_server(cfg):
             "the most recent failed job."
         ),
     )
-    def stata_diagnose_error(job_id: str = "", file_path: str = "", error_log: str = "") -> str:
-        if file_path and error_log:
-            target = os.path.abspath(os.path.expanduser(file_path))
-            src = ""
-            if os.path.isfile(target):
-                try:
-                    with open(target, "r", encoding="utf-8", errors="replace") as handle:
-                        src = handle.read()
-                except OSError:
-                    src = ""
-            diag = stata_mcp_analysis.locate_error_in_do(src, [], file_path=target, error_log=error_log)
+    async def stata_diagnose_error(job_id: str = "", file_path: str = "", error_log: str = "") -> str:
+        def _run_sync():
+            if file_path and error_log:
+                target = os.path.abspath(os.path.expanduser(file_path))
+                src = ""
+                if os.path.isfile(target):
+                    try:
+                        with open(target, "r", encoding="utf-8", errors="replace") as handle:
+                            src = handle.read()
+                    except OSError:
+                        src = ""
+                diag = stata_mcp_analysis.locate_error_in_do(src, [], file_path=target, error_log=error_log)
+                if not diag:
+                    return _dumps({"found": False, "message": "No Stata r(NNN) error found in error_log."})
+                return _dumps({"found": True, "diagnosis": diag, "formatted": stata_mcp_analysis.format_error_diagnosis(diag)})
+
+            job = None
+            if job_id:
+                job = jobs.get(job_id)
+                if job is None:
+                    return "Error: unknown job %r" % job_id
+            else:
+                for row in jobs.list(limit=30):
+                    if row.get("status") == FAILED:
+                        job = jobs.get(row["job_id"])
+                        break
+                if job is None:
+                    recent = jobs.list(limit=1)
+                    if recent:
+                        job = jobs.get(recent[0]["job_id"])
+            if job is None:
+                return "Error: no jobs recorded yet"
+
+            diag = getattr(job, "error_diagnosis", None)
+            if diag is None:
+                src_path = getattr(job, "source_file", "") or getattr(job, "file_path", "")
+                src_text = ""
+                if src_path and os.path.isfile(src_path):
+                    try:
+                        with open(src_path, "r", encoding="utf-8", errors="replace") as handle:
+                            src_text = handle.read()
+                    except OSError:
+                        src_text = ""
+                diag = stata_mcp_analysis.locate_error_in_do(
+                    src_text,
+                    job.read_records(),
+                    file_path=src_path,
+                    line_offset=getattr(job, "line_offset", 0),
+                )
             if not diag:
-                return _dumps({"found": False, "message": "No Stata r(NNN) error found in error_log."})
-            return _dumps({"found": True, "diagnosis": diag, "formatted": stata_mcp_analysis.format_error_diagnosis(diag)})
-
-        job = None
-        if job_id:
-            job = jobs.get(job_id)
-            if job is None:
-                return "Error: unknown job %r" % job_id
-        else:
-            for row in jobs.list(limit=30):
-                if row.get("status") == FAILED:
-                    job = jobs.get(row["job_id"])
-                    break
-            if job is None:
-                recent = jobs.list(limit=1)
-                if recent:
-                    job = jobs.get(recent[0]["job_id"])
-        if job is None:
-            return "Error: no jobs recorded yet"
-
-        diag = getattr(job, "error_diagnosis", None)
-        if diag is None:
-            src_path = getattr(job, "source_file", "") or getattr(job, "file_path", "")
-            src_text = ""
-            if src_path and os.path.isfile(src_path):
-                try:
-                    with open(src_path, "r", encoding="utf-8", errors="replace") as handle:
-                        src_text = handle.read()
-                except OSError:
-                    src_text = ""
-            diag = stata_mcp_analysis.locate_error_in_do(
-                src_text,
-                job.read_records(),
-                file_path=src_path,
-                line_offset=getattr(job, "line_offset", 0),
+                return _dumps({"job_id": job.job_id, "status": job.status, "found": False, "message": "No fatal Stata error detected in this job."})
+            return _dumps(
+                {
+                    "job_id": job.job_id,
+                    "status": job.status,
+                    "found": True,
+                    "diagnosis": diag,
+                    "formatted": stata_mcp_analysis.format_error_diagnosis(diag),
+                }
             )
-        if not diag:
-            return _dumps({"job_id": job.job_id, "status": job.status, "found": False, "message": "No fatal Stata error detected in this job."})
-        return _dumps(
-            {
-                "job_id": job.job_id,
-                "status": job.status,
-                "found": True,
-                "diagnosis": diag,
-                "formatted": stata_mcp_analysis.format_error_diagnosis(diag),
-            }
-        )
+
+        return await asyncio.to_thread(_run_sync)
 
     @mcp.tool(
         name="stata_lint_do",
@@ -1477,21 +1511,24 @@ def build_server(cfg):
             "and catch missing-value `>` traps, unsorted subscripts, or unbalanced braces/quotes. Pass file_path or code."
         ),
     )
-    def stata_lint_do(file_path: str = "", code: str = "", strict: bool = False) -> str:
-        target = ""
-        text = code or ""
-        if file_path:
-            target = os.path.abspath(os.path.expanduser(file_path))
-            if not os.path.isfile(target):
-                return "Error: file not found: %s" % file_path
-            try:
-                with open(target, "r", encoding="utf-8", errors="replace") as handle:
-                    text = handle.read()
-            except OSError as exc:
-                return "Error: cannot read %s: %s" % (target, exc)
-        if not text.strip():
-            return "Error: provide either file_path or non-empty code"
-        return _dumps(stata_mcp_analysis.lint_do_code(text, file_path=target, strict=bool(strict)))
+    async def stata_lint_do(file_path: str = "", code: str = "", strict: bool = False) -> str:
+        def _run_sync():
+            target = ""
+            text = code or ""
+            if file_path:
+                target = os.path.abspath(os.path.expanduser(file_path))
+                if not os.path.isfile(target):
+                    return "Error: file not found: %s" % file_path
+                try:
+                    with open(target, "r", encoding="utf-8", errors="replace") as handle:
+                        text = handle.read()
+                except OSError as exc:
+                    return "Error: cannot read %s: %s" % (target, exc)
+            if not text.strip():
+                return "Error: provide either file_path or non-empty code"
+            return _dumps(stata_mcp_analysis.lint_do_code(text, file_path=target, strict=bool(strict)))
+
+        return await asyncio.to_thread(_run_sync)
 
     @mcp.tool(
         name="stata_vectorize_guide",
@@ -1504,8 +1541,8 @@ def build_server(cfg):
             "'collapse_summary', 'frames_not_preserve', 'mata_matrix', 'all')."
         ),
     )
-    def stata_vectorize_guide(pattern: str = "", code: str = "") -> str:
-        return _dumps(stata_mcp_analysis.vectorize_guide(pattern=pattern, code=code))
+    async def stata_vectorize_guide(pattern: str = "", code: str = "") -> str:
+        return await asyncio.to_thread(lambda: _dumps(stata_mcp_analysis.vectorize_guide(pattern=pattern, code=code)))
 
     @mcp.tool(
         name="stata_inspect_data",
@@ -1514,31 +1551,34 @@ def build_server(cfg):
             "and sample table) with optional Stata `if_condition`."
         ),
     )
-    def stata_inspect_data(if_condition: str = "", max_rows: int = 20, session_id: str = "") -> str:
-        limit = max(1, min(int(max_rows or 20), 200))
-        params = {"max_rows": limit}
-        if if_condition and if_condition.strip():
-            params["if_condition"] = if_condition.strip()
-        if session_id and session_id.strip():
-            params["session_id"] = session_id.strip()
-        try:
-            payload = engine_get_json(cfg, "/view_data?" + urlencode(params), timeout=30.0)
-        except EngineError as exc:
-            return "Error: %s" % exc
-        if payload.get("status") != "success":
-            return "Error: %s" % payload.get("message", "could not inspect data")
-        columns = payload.get("columns") or []
-        rows = payload.get("data") or []
-        preview = _format_table_preview(columns, rows, max_rows=limit)
-        return _dumps(
-            {
-                "total_rows": payload.get("total_rows", payload.get("rows", len(rows))),
-                "displayed_rows": len(rows),
-                "columns": columns,
-                "dtypes": payload.get("dtypes", {}),
-                "table_preview": preview,
-            }
-        )
+    async def stata_inspect_data(if_condition: str = "", max_rows: int = 20, session_id: str = "") -> str:
+        def _run_sync():
+            limit = max(1, min(int(max_rows or 20), 200))
+            params = {"max_rows": limit}
+            if if_condition and if_condition.strip():
+                params["if_condition"] = if_condition.strip()
+            if session_id and session_id.strip():
+                params["session_id"] = session_id.strip()
+            try:
+                payload = engine_get_json(cfg, "/view_data?" + urlencode(params), timeout=30.0)
+            except EngineError as exc:
+                return "Error: %s" % exc
+            if payload.get("status") != "success":
+                return "Error: %s" % payload.get("message", "could not inspect data")
+            columns = payload.get("columns") or []
+            rows = payload.get("data") or []
+            preview = _format_table_preview(columns, rows, max_rows=limit)
+            return _dumps(
+                {
+                    "total_rows": payload.get("total_rows", payload.get("rows", len(rows))),
+                    "displayed_rows": len(rows),
+                    "columns": columns,
+                    "dtypes": payload.get("dtypes", {}),
+                    "table_preview": preview,
+                }
+            )
+
+        return await asyncio.to_thread(_run_sync)
 
     @mcp.tool(
         name="stata_describe",
@@ -1548,53 +1588,56 @@ def build_server(cfg):
             "(without clobbering the active frame)—to verify exact variable names, types, and missingness."
         ),
     )
-    def stata_describe(
+    async def stata_describe(
         varlist: str = "",
         detail: bool = False,
         session_id: str = "",
         file_path: str = "",
     ) -> str:
-        vl = (varlist or "").strip()
-        if vl and re.search(r'[;\r\n`"$]', vl):
-            return "Error: varlist contains disallowed characters"
-        fp = (file_path or "").strip()
-        if fp:
-            if re.search(r'[;\r\n`"$]', fp):
-                return "Error: file_path contains disallowed characters"
-            target = os.path.abspath(os.path.expanduser(fp))
-            if not os.path.isfile(target):
-                return "Error: file not found: %s" % fp
-            target_vars = (" " + vl) if vl else ""
-            sum_opt = ", detail" if detail else ""
-            if detail or vl:
-                frame_name = "_mcp_desc_%s" % uuid.uuid4().hex[:6]
+        def _run_sync():
+            vl = (varlist or "").strip()
+            if vl and re.search(r'[;\r\n`"$]', vl):
+                return "Error: varlist contains disallowed characters"
+            fp = (file_path or "").strip()
+            if fp:
+                if re.search(r'[;\r\n`"$]', fp):
+                    return "Error: file_path contains disallowed characters"
+                target = os.path.abspath(os.path.expanduser(fp))
+                if not os.path.isfile(target):
+                    return "Error: file not found: %s" % fp
+                target_vars = (" " + vl) if vl else ""
+                sum_opt = ", detail" if detail else ""
+                if detail or vl:
+                    frame_name = "_mcp_desc_%s" % uuid.uuid4().hex[:6]
+                    code = "\n".join(
+                        [
+                            "capture frame drop %s" % frame_name,
+                            "frame create %s" % frame_name,
+                            'frame %s: use "%s", clear' % (frame_name, target),
+                            "frame %s: describe%s" % (frame_name, target_vars),
+                            "frame %s: summarize%s%s" % (frame_name, target_vars, sum_opt),
+                            "frame %s: capture noisily misstable summarize%s" % (frame_name, target_vars),
+                            "capture frame drop %s" % frame_name,
+                        ]
+                    )
+                else:
+                    code = 'describe using "%s"' % target
+            else:
+                target_vars = (" " + vl) if vl else ""
+                sum_opt = ", detail" if detail else ""
                 code = "\n".join(
                     [
-                        "capture frame drop %s" % frame_name,
-                        "frame create %s" % frame_name,
-                        'frame %s: use "%s", clear' % (frame_name, target),
-                        "frame %s: describe%s" % (frame_name, target_vars),
-                        "frame %s: summarize%s%s" % (frame_name, target_vars, sum_opt),
-                        "frame %s: capture noisily misstable summarize%s" % (frame_name, target_vars),
-                        "capture frame drop %s" % frame_name,
+                        "describe%s" % target_vars,
+                        "summarize%s%s" % (target_vars, sum_opt),
+                        "capture noisily misstable summarize%s" % target_vars,
                     ]
                 )
-            else:
-                code = 'describe using "%s"' % target
-        else:
-            target_vars = (" " + vl) if vl else ""
-            sum_opt = ", detail" if detail else ""
-            code = "\n".join(
-                [
-                    "describe%s" % target_vars,
-                    "summarize%s%s" % (target_vars, sum_opt),
-                    "capture noisily misstable summarize%s" % target_vars,
-                ]
-            )
-        job = _run_quick_selection(jobs, cfg, code, session_id=session_id, timeout=25.0)
-        if job.status == RUNNING:
-            return _dumps(_wait_hint(job))
-        return job.result_text()
+            job = _run_quick_selection(jobs, cfg, code, session_id=session_id, timeout=25.0)
+            if job.status == RUNNING:
+                return _dumps(_wait_hint(job))
+            return job.result_text()
+
+        return await asyncio.to_thread(_run_sync)
 
     @mcp.tool(
         name="stata_stored_results",
@@ -1603,27 +1646,35 @@ def build_server(cfg):
             "'r' (general) | 'c' (system/dataset metadata) | 'estimates' (saved models)."
         ),
     )
-    def stata_stored_results(kind: str = "all", session_id: str = "") -> str:
-        k = (kind or "all").strip().lower()
-        if k not in ("all", "e", "r", "c", "estimates"):
-            return "Error: kind must be one of all, e, r, c, estimates"
-        snippets = []
-        if k in ("all", "e"):
-            snippets.append("capture noisily ereturn list")
-        if k in ("all", "r"):
-            snippets.append("capture noisily return list")
-        if k in ("all", "estimates"):
-            snippets.append("capture noisily estimates dir")
-        if k in ("all", "c"):
-            snippets.append(
-                'display "c(N)=" c(N) "  c(k)=" c(k) "  c(stata_version)=" c(stata_version) '
-                '"  c(pwd)=" `"`c(pwd)\'"\' "  c(filename)=" `"`c(filename)\'"\''
-            )
-        job = _run_quick_selection(jobs, cfg, "\n".join(snippets), session_id=session_id, timeout=20.0)
-        if job.status == RUNNING:
-            return _dumps(_wait_hint(job))
-        return job.result_text()
+    async def stata_stored_results(kind: str = "all", session_id: str = "") -> str:
+        def _run_sync():
+            k = (kind or "all").strip().lower()
+            if k not in ("all", "e", "r", "c", "estimates"):
+                return "Error: kind must be one of all, e, r, c, estimates"
+            snippets = []
+            if k in ("all", "e"):
+                snippets.append("capture noisily ereturn list")
+            if k in ("all", "r"):
+                snippets.append("capture noisily return list")
+            if k in ("all", "estimates"):
+                snippets.append("capture noisily estimates dir")
+            if k in ("all", "c"):
+                snippets.append(
+                    'display "c(N)=" c(N) "  c(k)=" c(k) "  c(stata_version)=" c(stata_version) '
+                    '"  c(pwd)=" `"`c(pwd)\'"\' "  c(filename)=" `"`c(filename)\'"\''
+                )
+            job = _run_quick_selection(jobs, cfg, "\n".join(snippets), session_id=session_id, timeout=20.0)
+            if job.status == RUNNING:
+                return _dumps(_wait_hint(job))
+            return job.result_text()
 
+        return await asyncio.to_thread(_run_sync)
+
+    return mcp, jobs
+
+
+def build_server(cfg):
+    mcp, _jobs = build_gateway(cfg)
     return mcp
 
 
