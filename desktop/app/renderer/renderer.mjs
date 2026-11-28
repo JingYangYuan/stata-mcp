@@ -1,23 +1,23 @@
 const api = window.stataMcpDesktop;
 
 const MCP_TOOLS_CATALOG = [
-  { name: "stata_run_file", cat: "执行与作业", desc: "运行 .do 文件（短任务直出，长任务异步 job_id，支持 lint=True，出错自带行号定位）" },
-  { name: "stata_run_selection", cat: "执行与作业", desc: "运行选中代码片段，短任务直出结果、长任务返回 job_id" },
-  { name: "stata_run_lines", cat: "执行与作业", desc: "运行指定行区间 [start_line, end_line]，报错自动映射回原文件行号" },
-  { name: "stata_job_status", cat: "执行与作业", desc: "查询作业状态、步骤数、耗时与失败时的 error_code / error_line" },
-  { name: "stata_job_tail", cat: "执行与作业", desc: "按 offset 增量读取步骤预览 (steps) 或完整日志 (full)" },
-  { name: "stata_job_list", cat: "执行与作业", desc: "列出最近 Stata 作业及摘要" },
-  { name: "stata_job_cancel", cat: "执行与作业", desc: "向引擎发送 /stop_execution 终止运行中的作业" },
-  { name: "stata_session", cat: "会话管理", desc: "列出或销毁并行 Stata 会话 (session_id)" },
-  { name: "stata_help", cat: "Help 参考", desc: "自动解析别名与 SMCL 格式的官方/SSC help 文档（支持按章节提取）" },
-  { name: "stata_search_help", cat: "Help 参考", desc: "按关键词检索已安装的 base / SSC help 文件与命令别名" },
-  { name: "stata_which", cat: "Help 参考", desc: "检查命令是否已安装（built-in 或 .ado 路径与版本头）" },
-  { name: "stata_diagnose_error", cat: "报错定位", desc: "定位失败作业（或任意日志）在 .do 中的精确行号、上下文与修复建议" },
-  { name: "stata_lint_do", cat: "破除循环", desc: "拦截 1/_N、levelsof+foreach、preserve 循环、缺失值 > 陷阱与语法错误" },
-  { name: "stata_vectorize_guide", cat: "破除循环", desc: "提供 11 类典型 Stata 向量化替代方案（bysort / egen / frames / mata）" },
-  { name: "stata_inspect_data", cat: "数据探查", desc: "直连 /view_data 查看内存数据集行数、列名、类型与样本预览" },
-  { name: "stata_describe", cat: "数据探查", desc: "只读运行 describe + summarize + misstable summarize 核验变量" },
-  { name: "stata_stored_results", cat: "数据探查", desc: "查看内存中的 e()、r()、c() 与已保存估计结果 estimates dir" },
+  { name: "stata_inspect_data", cat: "数据探查", desc: "[步骤1] 直连 /view_data 查看内存数据集行数、列名、类型与样本预览" },
+  { name: "stata_describe", cat: "数据探查", desc: "[步骤1] 只读运行 describe + summarize + misstable summarize（支持内存或指定 .dta 文件）" },
+  { name: "stata_stored_results", cat: "数据探查", desc: "[步骤1/3] 查看内存中的 e()、r()、c() 与已保存估计结果 estimates dir" },
+  { name: "stata_which", cat: "Help 参考", desc: "[步骤2] 检查命令是否已安装（自动解析别名、built-in 或 .ado 路径与版本头）" },
+  { name: "stata_search_help", cat: "Help 参考", desc: "[步骤2] 按关键词检索已安装的 base / SSC help 文件与命令别名" },
+  { name: "stata_help", cat: "Help 参考", desc: "[步骤2] 自动解析别名与 SMCL 格式的官方/SSC help 文档（支持按章节提取）" },
+  { name: "stata_run_file", cat: "执行与作业", desc: "[步骤3] 运行 .do 文件（短任务直出，长任务异步 job_id，支持 lint=True，出错自带行号定位）" },
+  { name: "stata_run_selection", cat: "执行与作业", desc: "[步骤3] 运行选中代码片段，短任务直出结果、长任务返回 job_id" },
+  { name: "stata_job_status", cat: "执行与作业", desc: "[步骤3] 查询作业状态、步骤数、耗时与失败时的 error_code / error_line" },
+  { name: "stata_job_tail", cat: "执行与作业", desc: "[步骤3] 按 offset 增量读取步骤预览 (steps) 或完整日志 (full)" },
+  { name: "stata_job_list", cat: "执行与作业", desc: "[步骤3] 列出最近 Stata 作业及摘要" },
+  { name: "stata_job_cancel", cat: "执行与作业", desc: "[步骤3] 向引擎发送 /stop_execution 终止运行中的作业" },
+  { name: "stata_session", cat: "会话管理", desc: "[步骤3] 列出或销毁并行 Stata 会话 (session_id)" },
+  { name: "stata_diagnose_error", cat: "报错定位", desc: "[步骤4] 定位失败作业（或任意日志）在 .do 中的精确行号、上下文与修复建议" },
+  { name: "stata_run_lines", cat: "执行与作业", desc: "[步骤4] 运行指定行区间 [start_line, end_line] 快速复测，报错自动映射回原文件行号" },
+  { name: "stata_lint_do", cat: "破除循环", desc: "[步骤5] 拦截 1/_N、levelsof+foreach、前向填充、mvencode、宽表年份、preserve 循环等低效模式" },
+  { name: "stata_vectorize_guide", cat: "破除循环", desc: "[步骤5] 提供 15 类经真实 Stata 19.5 验证的向量化替代方案（bysort / egen / frames / mata 等）" },
 ];
 
 const SAMPLE_LINT_CODE = `levelsof industry, local(inds)
@@ -52,10 +52,30 @@ function escapeHtml(str) {
     .replaceAll(">", "&gt;");
 }
 
+let _snackbarTimer = null;
+function showSnackbar(message, durationMs = 2200) {
+  const el = $("app-snackbar");
+  if (!el) return;
+  el.textContent = message;
+  el.classList.add("visible");
+  if (_snackbarTimer) clearTimeout(_snackbarTimer);
+  _snackbarTimer = setTimeout(() => {
+    el.classList.remove("visible");
+  }, durationMs);
+}
+
+let _busyDepth = 0;
+function setGlobalBusy(active) {
+  _busyDepth = Math.max(0, _busyDepth + (active ? 1 : -1));
+  const bar = $("global-progress-bar");
+  if (bar) bar.classList.toggle("active", _busyDepth > 0);
+}
+
 function flashCopied(btn, originalLabel) {
   if (!btn) return;
   const prev = originalLabel || btn.textContent;
   btn.textContent = "已复制 ✓";
+  showSnackbar("已复制到剪贴板");
   setTimeout(() => {
     btn.textContent = prev;
   }, 1400);
@@ -66,7 +86,7 @@ async function copyWithFeedback(text, btn) {
   flashCopied(btn);
 }
 
-/* ── Theme & Platform ───────────────────────────────────────────────── */
+/* ── Theme, Motion, Density & Platform ──────────────────────────────── */
 function applyTheme(choice) {
   const valid = ["light", "system", "dark"].includes(choice) ? choice : "system";
   document.documentElement.setAttribute("data-theme", valid);
@@ -76,29 +96,84 @@ function applyTheme(choice) {
   });
 }
 
+function applyMotion(choice) {
+  const valid = ["full", "reduced"].includes(choice) ? choice : "full";
+  document.documentElement.setAttribute("data-motion", valid);
+  localStorage.setItem("stata-mcp-motion", valid);
+  document.querySelectorAll("[data-motion-choice]").forEach((b) => {
+    b.classList.toggle("active", b.dataset.motionChoice === valid);
+  });
+}
+
+function applyDensity(choice) {
+  const valid = ["comfortable", "compact"].includes(choice) ? choice : "comfortable";
+  document.documentElement.setAttribute("data-density", valid);
+  localStorage.setItem("stata-mcp-density", valid);
+  document.querySelectorAll("[data-density-choice]").forEach((b) => {
+    b.classList.toggle("active", b.dataset.densityChoice === valid);
+  });
+}
+
+function attachMaterialRipple() {
+  document.addEventListener("pointerdown", (e) => {
+    if (document.documentElement.getAttribute("data-motion") === "reduced") return;
+    const target = e.target.closest(".btn, .nav-btn, .workflow-step");
+    if (!target || target.disabled) return;
+    const rect = target.getBoundingClientRect();
+    const size = Math.max(rect.width, rect.height);
+    const ripple = document.createElement("span");
+    ripple.className = "md-ripple";
+    ripple.style.width = `${size}px`;
+    ripple.style.height = `${size}px`;
+    ripple.style.left = `${e.clientX - rect.left - size / 2}px`;
+    ripple.style.top = `${e.clientY - rect.top - size / 2}px`;
+    target.appendChild(ripple);
+    setTimeout(() => ripple.remove(), 520);
+  });
+}
+
 function initPlatformAndTheme() {
   if (api.platform) {
     document.body.setAttribute("data-platform", api.platform);
   }
-  const saved = localStorage.getItem("stata-mcp-theme") || "system";
-  applyTheme(saved);
+  applyTheme(localStorage.getItem("stata-mcp-theme") || "system");
+  const prefersReduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+  applyMotion(localStorage.getItem("stata-mcp-motion") || (prefersReduced ? "reduced" : "full"));
+  applyDensity(localStorage.getItem("stata-mcp-density") || "comfortable");
+
   document.querySelectorAll(".theme-btn").forEach((btn) => {
     btn.addEventListener("click", () => applyTheme(btn.dataset.themeChoice));
   });
+  document.querySelectorAll("[data-motion-choice]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      applyMotion(btn.dataset.motionChoice);
+      showSnackbar(btn.dataset.motionChoice === "reduced" ? "已切换为减弱动效" : "已启用 Material 标准动效");
+    });
+  });
+  document.querySelectorAll("[data-density-choice]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      applyDensity(btn.dataset.densityChoice);
+      showSnackbar(btn.dataset.densityChoice === "compact" ? "已切换为紧凑布局" : "已切换为舒适布局");
+    });
+  });
+  attachMaterialRipple();
 }
 
 /* ── Tab Navigation ─────────────────────────────────────────────────── */
 function switchTab(tabId) {
+  const validTabs = ["overview", "config", "jobs", "help", "lint", "doctor"];
+  const target = validTabs.includes(tabId) ? tabId : "overview";
+  localStorage.setItem("stata-mcp-active-tab", target);
   document.querySelectorAll(".nav-btn").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.tab === tabId);
+    btn.classList.toggle("active", btn.dataset.tab === target);
   });
   document.querySelectorAll(".tab-panel").forEach((panel) => {
-    panel.classList.toggle("active", panel.id === `tab-${tabId}`);
+    panel.classList.toggle("active", panel.id === `tab-${target}`);
   });
-  if (tabId === "config") refreshConfigSnippet();
-  if (tabId === "jobs") refreshJobs();
-  if (tabId === "doctor") refreshLogs();
-  if (tabId === "lint" && !stateUI.allRecipes.length) loadAllRecipes();
+  if (target === "config") refreshConfigSnippet();
+  if (target === "jobs") refreshJobs();
+  if (target === "doctor") refreshLogs();
+  if (target === "lint" && !stateUI.allRecipes.length) loadAllRecipes();
 }
 
 function openHelpForTopic(topic) {
@@ -134,6 +209,7 @@ async function refreshOverview() {
     refreshBtn.disabled = true;
     refreshBtn.textContent = "检测中…";
   }
+  setGlobalBusy(true);
   try {
     const res = await api.getOverview({ stataPath: $("in-stata-path").value.trim() || undefined });
     if (res.appVersion) {
@@ -255,6 +331,7 @@ async function refreshOverview() {
     $("ov-overall-badge").className = "pill-badge bad";
     appendConsole(`\n[错误] 刷新状态失败: ${err?.message || err}\n`);
   } finally {
+    setGlobalBusy(false);
     if (refreshBtn) {
       refreshBtn.disabled = false;
       refreshBtn.textContent = "刷新状态";
@@ -273,6 +350,7 @@ const ACTION_BTN_MAP = {
 
 function setActionBusy(busy, activeAction = "") {
   stateUI.actionRunning = busy;
+  setGlobalBusy(busy);
   for (const id of Object.values(ACTION_BTN_MAP)) {
     const el = $(id);
     if (!el) continue;
@@ -533,56 +611,67 @@ async function runLint() {
   const filePath = $("lint-file-input").value.trim();
   const code = $("lint-code-input").value;
   const strict = $("chk-lint-strict").checked;
-  const res = await api.lintDo({ filePath, code, strict });
-  const issues = res.issues || [];
-  const score = res.idiomatic_score ?? 100;
+  setGlobalBusy(true);
+  try {
+    const res = await api.lintDo({ filePath, code, strict });
+    const issues = res.issues || [];
+    const score = res.idiomatic_score ?? 100;
 
-  const banner = $("lint-score-banner");
-  banner.classList.remove("hidden");
-  const fillColor = score >= 80 ? "var(--ok)" : score >= 50 ? "var(--warn)" : "var(--err)";
-  banner.innerHTML = `
-    <div>
-      <strong>地道度评分：${score} / 100</strong>
-      <div class="card-sub">${escapeHtml(res.summary || "")}</div>
-    </div>
-    <div class="score-meter"><div class="score-fill" style="width:${score}%;background:${fillColor}"></div></div>
-  `;
-
-  const box = $("lint-result-box");
-  if (!issues.length) {
-    box.innerHTML = `<div class="issue-card info"><strong>未发现反循环或常见语法陷阱！</strong></div>`;
-    return;
-  }
-
-  box.innerHTML = issues
-    .map((iss, idx) => {
-      const helpBtn = iss.help_topic
-        ? `<button type="button" class="btn btn-ghost btn-sm" data-jump-help="${escapeHtml(iss.help_topic)}">查看 help ${escapeHtml(iss.help_topic)}</button>`
-        : "";
-      const copyBtn = iss.example_after
-        ? `<button type="button" class="btn btn-ghost btn-sm" data-copy-idx="${idx}">复制改写</button>`
-        : "";
-      return `<div class="issue-card ${escapeHtml(iss.severity)}">
-        <div class="card-header-row">
-          <strong>L${escapeHtml(iss.line)} [${escapeHtml(iss.severity)}] ${escapeHtml(iss.rule_id)}</strong>
-          <div class="header-actions">${helpBtn}${copyBtn}</div>
-        </div>
-        <div>${escapeHtml(iss.message)}</div>
-        <div class="hint-text">建议：${escapeHtml(iss.suggestion)}</div>
-        ${iss.example_after ? `<pre>${escapeHtml(iss.example_after)}</pre>` : ""}
-      </div>`;
-    })
-    .join("");
-
-  box.querySelectorAll("[data-jump-help]").forEach((b) => {
-    b.addEventListener("click", () => openHelpForTopic(b.dataset.jumpHelp));
-  });
-  box.querySelectorAll("[data-copy-idx]").forEach((b) => {
-    b.addEventListener("click", () => {
-      const item = issues[Number(b.dataset.copyIdx)];
-      if (item?.example_after) copyWithFeedback(item.example_after, b);
+    const banner = $("lint-score-banner");
+    banner.classList.remove("hidden");
+    const fillColor = score >= 80 ? "var(--ok)" : score >= 50 ? "var(--warn)" : "var(--err)";
+    banner.innerHTML = `
+      <div>
+        <strong>地道度评分：<span class="score-num">0</span> / 100</strong>
+        <div class="card-sub">${escapeHtml(res.summary || "")}</div>
+      </div>
+      <div class="score-meter"><div class="score-fill" style="width:0%;background:${fillColor}"></div></div>
+    `;
+    requestAnimationFrame(() => {
+      const fill = banner.querySelector(".score-fill");
+      if (fill) fill.style.width = `${score}%`;
+      const numEl = banner.querySelector(".score-num");
+      if (numEl) numEl.textContent = String(score);
     });
-  });
+
+    const box = $("lint-result-box");
+    if (!issues.length) {
+      box.innerHTML = `<div class="issue-card info"><strong>未发现反循环或常见语法陷阱！</strong></div>`;
+      return;
+    }
+
+    box.innerHTML = issues
+      .map((iss, idx) => {
+        const helpBtn = iss.help_topic
+          ? `<button type="button" class="btn btn-ghost btn-sm" data-jump-help="${escapeHtml(iss.help_topic)}">查看 help ${escapeHtml(iss.help_topic)}</button>`
+          : "";
+        const copyBtn = iss.example_after
+          ? `<button type="button" class="btn btn-ghost btn-sm" data-copy-idx="${idx}">复制改写</button>`
+          : "";
+        return `<div class="issue-card ${escapeHtml(iss.severity)}">
+          <div class="card-header-row">
+            <strong>L${escapeHtml(iss.line)} [${escapeHtml(iss.severity)}] ${escapeHtml(iss.rule_id)}</strong>
+            <div class="header-actions">${helpBtn}${copyBtn}</div>
+          </div>
+          <div>${escapeHtml(iss.message)}</div>
+          <div class="hint-text">建议：${escapeHtml(iss.suggestion)}</div>
+          ${iss.example_after ? `<pre>${escapeHtml(iss.example_after)}</pre>` : ""}
+        </div>`;
+      })
+      .join("");
+
+    box.querySelectorAll("[data-jump-help]").forEach((b) => {
+      b.addEventListener("click", () => openHelpForTopic(b.dataset.jumpHelp));
+    });
+    box.querySelectorAll("[data-copy-idx]").forEach((b) => {
+      b.addEventListener("click", () => {
+        const item = issues[Number(b.dataset.copyIdx)];
+        if (item?.example_after) copyWithFeedback(item.example_after, b);
+      });
+    });
+  } finally {
+    setGlobalBusy(false);
+  }
 }
 
 async function loadAllRecipes() {
@@ -610,6 +699,7 @@ function renderRecipes() {
           <button type="button" class="btn btn-ghost btn-sm" data-copy-recipe="${idx}">复制地道写法</button>
         </div>
         <div class="card-sub">${escapeHtml(r.why_better)}</div>
+        ${r.verified_note ? `<div class="verified-pill">✓ ${escapeHtml(r.verified_note)}</div>` : ""}
         <div class="compare-grid">
           <div class="compare-col">
             <div class="compare-col-label">避免：低效循环写法</div>
@@ -642,6 +732,21 @@ async function refreshLogs() {
 function wireEvents() {
   document.querySelectorAll(".nav-btn").forEach((btn) => {
     btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+  });
+  document.querySelectorAll("#workflow-stepper [data-goto-tab]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (btn.dataset.filterCat) {
+        stateUI.toolsCategory = btn.dataset.filterCat;
+        renderToolsCatalog();
+      }
+      if (btn.dataset.jobsFilter) {
+        stateUI.jobsFilter = btn.dataset.jobsFilter;
+        document.querySelectorAll("#jobs-filter-seg .seg-btn").forEach((x) =>
+          x.classList.toggle("active", x.dataset.jobFilter === stateUI.jobsFilter),
+        );
+      }
+      switchTab(btn.dataset.gotoTab);
+    });
   });
   api.onLog(({ text }) => appendConsole(text));
   api.onStateChanged?.(() => refreshOverview());
@@ -827,4 +932,6 @@ function wireEvents() {
 initPlatformAndTheme();
 renderToolsCatalog();
 wireEvents();
+const savedTab = localStorage.getItem("stata-mcp-active-tab");
+if (savedTab && savedTab !== "overview") switchTab(savedTab);
 refreshOverview().finally(() => refreshConfigSnippet());

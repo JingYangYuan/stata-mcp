@@ -1,21 +1,38 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="Stata MCP Studio">
   <defs>
-    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#0f2942"/>
-      <stop offset="55%" stop-color="#174c78"/>
-      <stop offset="100%" stop-color="#1e6b8f"/>
+    <linearGradient id="surface" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#F1F3F4"/>
     </linearGradient>
-    <linearGradient id="bar" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#38bdf8"/>
-      <stop offset="100%" stop-color="#0ea5e9"/>
+    <linearGradient id="g-yellow" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FBBC04"/>
+      <stop offset="100%" stop-color="#F29900"/>
+    </linearGradient>
+    <linearGradient id="g-green" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#34A853"/>
+      <stop offset="100%" stop-color="#1E8E3E"/>
+    </linearGradient>
+    <linearGradient id="g-blue" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#4285F4"/>
+      <stop offset="100%" stop-color="#1A73E8"/>
+    </linearGradient>
+    <linearGradient id="g-red" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#EA4335"/>
+      <stop offset="100%" stop-color="#D93025"/>
     </linearGradient>
   </defs>
-  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#bg)"/>
-  <rect x="120" y="120" width="784" height="784" rx="160" fill="none" stroke="#38bdf8" stroke-opacity="0.25" stroke-width="8"/>
-  <rect x="240" y="540" width="110" height="220" rx="24" fill="url(#bar)"/>
-  <rect x="395" y="420" width="110" height="340" rx="24" fill="url(#bar)"/>
-  <rect x="550" y="300" width="110" height="460" rx="24" fill="url(#bar)"/>
-  <path d="M235 450 L395 340 L550 245 L755 215" fill="none" stroke="#f8fafc" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="755" cy="215" r="36" fill="#22c55e" stroke="#f8fafc" stroke-width="12"/>
-  <rect x="705" y="360" width="90" height="400" rx="24" fill="#e2e8f0" fill-opacity="0.92"/>
+  <!-- Google Material white squircle surface -->
+  <rect x="64" y="64" width="896" height="896" rx="224" fill="url(#surface)" stroke="#DADCE0" stroke-width="10"/>
+  <!-- Subtle baseline axis -->
+  <rect x="212" y="756" width="600" height="20" rx="10" fill="#E8EAED"/>
+  <!-- Three ascending Google-color vectorized data columns -->
+  <rect x="228" y="512" width="132" height="224" rx="40" fill="url(#g-yellow)"/>
+  <rect x="412" y="388" width="132" height="348" rx="40" fill="url(#g-green)"/>
+  <rect x="596" y="252" width="132" height="484" rx="40" fill="url(#g-blue)"/>
+  <!-- Google Red regression / vector-flow curve -->
+  <path d="M236 422 L434 294 L608 214 L756 226" fill="none" stroke="url(#g-red)" stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- MCP hub connector node -->
+  <circle cx="766" cy="226" r="68" fill="#FFFFFF"/>
+  <circle cx="766" cy="226" r="52" fill="#4285F4"/>
+  <circle cx="766" cy="226" r="22" fill="#FFFFFF"/>
 </svg>

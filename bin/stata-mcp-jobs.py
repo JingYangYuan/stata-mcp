@@ -58,7 +58,7 @@ if _BIN_DIR not in sys.path:
 
 import stata_mcp_analysis  # noqa: E402
 
-GATEWAY_VERSION = "1.2.4"
+GATEWAY_VERSION = "1.3.0"
 TOOLS_COUNT = 17
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 4001
@@ -1033,16 +1033,22 @@ def build_server(cfg):
     mcp = FastMCP(
         name="stata-mcp",
         instructions=(
-            "Local Stata MCP gateway (17 tools). Best practices:\n"
-            "1. Before writing unfamiliar commands or options, call `stata_help(topic, section)` or "
-            "`stata_search_help(query)` / `stata_which(command)` to verify exact Stata syntax.\n"
-            "2. NEVER write observation-level `1/_N` or `levelsof`+`foreach` loops! Prefer `bysort`, "
-            "`egen`, `collapse`, `i.var`, `L./D.`, `frames`, or `mata`. Call `stata_lint_do` before "
-            "running complex .do files and `stata_vectorize_guide` for idiomatic replacements.\n"
-            "3. Long .do files run asynchronously: `stata_run_file` / `stata_run_lines` / `stata_run_selection` "
-            "return a job_id after 20s; poll with `stata_job_tail(job_id, offset)`.\n"
-            "4. On any error, read `[ERROR LOCATION]` or call `stata_diagnose_error` to jump to the "
-            "exact failing line, fix it, and re-test quickly with `stata_run_lines`."
+            "Local Stata MCP gateway (17 tools). Follow the canonical 5-step Stata workflow:\n"
+            "1. READ & INSPECT DATA FIRST: Before planning commands, call `stata_describe` "
+            "(supports in-memory data or optional `file_path` for .dta files), `stata_inspect_data`, "
+            "or `stata_stored_results(kind='c')` to verify exact variable names, storage types, sample size, and missingness.\n"
+            "2. CHECK COMMAND AVAILABILITY & READ HELP: Before writing commands or options, call "
+            "`stata_which(command)` to verify whether the built-in or SSC command is installed (and "
+            "`stata_search_help(query)` if unsure), then call `stata_help(topic, section)` to confirm exact syntax and stored results.\n"
+            "3. WRITE CODE & RUN TO COMPLETE THE TASK: Execute via `stata_run_file` (or `stata_run_selection`); "
+            "long runs return a `job_id` after 20s—poll progress with `stata_job_tail(job_id, offset)` and "
+            "`stata_job_status(job_id)`, and inspect results with `stata_stored_results`.\n"
+            "4. DIAGNOSE ERRORS & RE-RUN ON FAILURE: On any `r(NNN)` error, read `[ERROR LOCATION]` or call "
+            "`stata_diagnose_error`, verify variables/syntax via `stata_describe` / `stata_help`, fix the `.do` file, "
+            "and re-run with `stata_run_lines` (fast line-range retry) or `stata_run_file`.\n"
+            "5. ELIMINATE LOOPS & ENHANCE READABILITY: Run `stata_lint_do` and consult `stata_vectorize_guide` "
+            "(15 real-Stata-verified patterns: `bysort`, `egen`, `collapse`, `mvencode`/`mvdecode`, `reshape`, "
+            "`i.var`, `L./D.`, `frames`, `mata`) to replace slow/verbose loops with clean vectorized Stata, then re-run to verify identical output."
         ),
         host=cfg.host,
         port=cfg.port,
@@ -1079,7 +1085,7 @@ def build_server(cfg):
     @mcp.tool(
         name="stata_run_file",
         description=(
-            "Run a Stata .do file. Short files return output directly; long files run as a "
+            "[Step 3: Write & Run Code] Run a Stata .do file. Short files return output directly; long files run as a "
             "background job returning job_id (follow with stata_job_tail). Failures include exact "
             "[ERROR LOCATION] line numbers. Pass lint=True to pre-check anti-loop/syntax issues."
         ),
@@ -1166,8 +1172,8 @@ def build_server(cfg):
     @mcp.tool(
         name="stata_run_lines",
         description=(
-            "Run lines [start_line, end_line] (1-based inclusive) of a .do file. Useful for fast "
-            "iterative debugging after fixing an error; error line numbers map back to the original file."
+            "[Step 3/4: Targeted Run & Re-run] Run lines [start_line, end_line] (1-based inclusive) of a .do file. "
+            "Useful for fast iterative re-running after fixing an error; error line numbers map back to the original file."
         ),
     )
     def stata_run_lines(
@@ -1311,7 +1317,7 @@ def build_server(cfg):
     @mcp.tool(
         name="stata_help",
         description=(
-            "Read official Stata / installed SSC help documentation before writing commands so options and "
+            "[Step 2: Read Help] Read official Stata / installed SSC help documentation before writing commands so options and "
             "syntax are exact. Automatically resolves aliases (e.g. 'reg' -> 'regress'). Use section "
             "('syntax', 'options', 'examples', 'results', 'description') to retrieve a focused section."
         ),
@@ -1364,8 +1370,8 @@ def build_server(cfg):
     @mcp.tool(
         name="stata_which",
         description=(
-            "Check whether a Stata command (built-in or SSC/ado package) is installed, its file path, "
-            "and its version header."
+            "[Step 2: Check Command] Verify whether a Stata command (built-in or SSC/ado package) is "
+            "installed, resolve aliases (e.g. 'reg' -> 'regress'), and return its file path and version header."
         ),
     )
     def stata_which(command: str, session_id: str = "") -> str:
@@ -1373,9 +1379,10 @@ def build_server(cfg):
         if not cmd or not re.match(r"^[A-Za-z0-9_]+$", cmd):
             return "Error: command must be a valid Stata identifier (letters, digits, underscore)"
         local = stata_mcp_analysis.which_local(cmd, stata_path=cfg.stata_path)
+        resolved = local.get("resolved_command") or cmd
         live_output = ""
         try:
-            job = _run_quick_selection(jobs, cfg, "capture noisily which %s" % cmd, session_id=session_id, timeout=15.0)
+            job = _run_quick_selection(jobs, cfg, "capture noisily which %s" % resolved, session_id=session_id, timeout=15.0)
             if job.status != RUNNING:
                 live_output = job.result_text()
         except Exception:
@@ -1383,18 +1390,21 @@ def build_server(cfg):
         installed = local.get("found") or ("built-in" in live_output.lower()) or (".ado" in live_output.lower())
         payload = {
             "command": cmd,
+            "resolved_command": resolved,
             "installed": bool(installed),
             "local_lookup": local,
             "stata_which_output": live_output,
         }
-        if not installed:
-            payload["hint"] = "Not installed. Try `ssc install %s` or `search %s`." % (cmd, cmd)
+        if installed:
+            payload["next_step"] = "Call `stata_help(topic=%r, section='syntax')` before coding." % resolved
+        else:
+            payload["hint"] = "Not installed. Try `ssc install %s` or `stata_search_help(query=%r)`." % (resolved, cmd)
         return _dumps(payload)
 
     @mcp.tool(
         name="stata_diagnose_error",
         description=(
-            "Pinpoint the exact 1-based line number, source context snippet, error code explanation, and "
+            "[Step 4: Diagnose & Fix] Pinpoint the exact 1-based line number, source context snippet, error code explanation, and "
             "fix hint for a failed Stata job (or raw file_path + error_log). Leave job_id empty to inspect "
             "the most recent failed job."
         ),
@@ -1462,9 +1472,9 @@ def build_server(cfg):
     @mcp.tool(
         name="stata_lint_do",
         description=(
-            "Static analyzer to prevent AI from writing slow/unidiomatic Stata loops (1/_N, levelsof+foreach, "
-            "manual dummies, preserve/restore in loops, nested loops) and catch missing-value `>` traps or "
-            "unbalanced braces/quotes. Pass either file_path or code."
+            "[Step 5: Eliminate Loops & Improve Readability] Static analyzer to prevent slow/unidiomatic Stata loops "
+            "(1/_N, levelsof+foreach, carryforward, mvencode, wide year, postfile, manual dummies, preserve/restore, nested loops) "
+            "and catch missing-value `>` traps, unsorted subscripts, or unbalanced braces/quotes. Pass file_path or code."
         ),
     )
     def stata_lint_do(file_path: str = "", code: str = "", strict: bool = False) -> str:
@@ -1486,10 +1496,12 @@ def build_server(cfg):
     @mcp.tool(
         name="stata_vectorize_guide",
         description=(
-            "Anti-loop vectorization advisor: returns idiomatic Stata alternatives (bysort, egen, collapse, "
-            "i.var, L./D., frames, mata) for slow loop patterns. Pass `code` to auto-detect patterns in your "
-            "script, or `pattern` ('obs_loop', 'group_agg', 'lag_lead_diff', 'rolling_window', 'dummies_interactions', "
-            "'row_stats', 'group_regression', 'recode_inlist', 'bulk_rename', 'frames_not_preserve', 'mata_matrix', 'all')."
+            "[Step 5: Anti-Loop & Readability] Returns 15 real-Stata-verified idiomatic alternatives "
+            "(bysort, egen, collapse, mvencode/mvdecode, reshape, i.var, L./D., frames, mata) for slow/verbose loops. "
+            "Pass `code` to auto-detect patterns in your script, or `pattern` (e.g. 'obs_loop', 'group_agg', "
+            "'lag_lead_diff', 'rolling_window', 'dummies_interactions', 'row_stats', 'group_regression', "
+            "'recode_inlist', 'bulk_rename', 'carryforward_fill', 'mv_encode_decode', 'wide_to_long_panel', "
+            "'collapse_summary', 'frames_not_preserve', 'mata_matrix', 'all')."
         ),
     )
     def stata_vectorize_guide(pattern: str = "", code: str = "") -> str:
@@ -1498,8 +1510,8 @@ def build_server(cfg):
     @mcp.tool(
         name="stata_inspect_data",
         description=(
-            "Inspect the dataset currently loaded in Stata memory (rows, columns, dtypes, and sample table) "
-            "with optional Stata `if_condition`."
+            "[Step 1: Read Data] Inspect the dataset currently loaded in Stata memory (rows, columns, dtypes, "
+            "and sample table) with optional Stata `if_condition`."
         ),
     )
     def stata_inspect_data(if_condition: str = "", max_rows: int = 20, session_id: str = "") -> str:
@@ -1531,23 +1543,54 @@ def build_server(cfg):
     @mcp.tool(
         name="stata_describe",
         description=(
-            "Run read-only `describe`, `summarize` (optional `detail=True`), and `misstable summarize` on the "
-            "dataset in memory (or a specified `varlist`) to verify exact variable names, types, and missingness."
+            "[Step 1: Read Data] Run read-only `describe`, `summarize` (optional `detail=True`), and "
+            "`misstable summarize` on the dataset in memory—or on a `.dta` file via optional `file_path` "
+            "(without clobbering the active frame)—to verify exact variable names, types, and missingness."
         ),
     )
-    def stata_describe(varlist: str = "", detail: bool = False, session_id: str = "") -> str:
+    def stata_describe(
+        varlist: str = "",
+        detail: bool = False,
+        session_id: str = "",
+        file_path: str = "",
+    ) -> str:
         vl = (varlist or "").strip()
         if vl and re.search(r'[;\r\n`"$]', vl):
             return "Error: varlist contains disallowed characters"
-        target_vars = (" " + vl) if vl else ""
-        sum_opt = ", detail" if detail else ""
-        code = "\n".join(
-            [
-                "describe%s" % target_vars,
-                "summarize%s%s" % (target_vars, sum_opt),
-                "capture noisily misstable summarize%s" % target_vars,
-            ]
-        )
+        fp = (file_path or "").strip()
+        if fp:
+            if re.search(r'[;\r\n`"$]', fp):
+                return "Error: file_path contains disallowed characters"
+            target = os.path.abspath(os.path.expanduser(fp))
+            if not os.path.isfile(target):
+                return "Error: file not found: %s" % fp
+            target_vars = (" " + vl) if vl else ""
+            sum_opt = ", detail" if detail else ""
+            if detail or vl:
+                frame_name = "_mcp_desc_%s" % uuid.uuid4().hex[:6]
+                code = "\n".join(
+                    [
+                        "capture frame drop %s" % frame_name,
+                        "frame create %s" % frame_name,
+                        'frame %s: use "%s", clear' % (frame_name, target),
+                        "frame %s: describe%s" % (frame_name, target_vars),
+                        "frame %s: summarize%s%s" % (frame_name, target_vars, sum_opt),
+                        "frame %s: capture noisily misstable summarize%s" % (frame_name, target_vars),
+                        "capture frame drop %s" % frame_name,
+                    ]
+                )
+            else:
+                code = 'describe using "%s"' % target
+        else:
+            target_vars = (" " + vl) if vl else ""
+            sum_opt = ", detail" if detail else ""
+            code = "\n".join(
+                [
+                    "describe%s" % target_vars,
+                    "summarize%s%s" % (target_vars, sum_opt),
+                    "capture noisily misstable summarize%s" % target_vars,
+                ]
+            )
         job = _run_quick_selection(jobs, cfg, code, session_id=session_id, timeout=25.0)
         if job.status == RUNNING:
             return _dumps(_wait_hint(job))

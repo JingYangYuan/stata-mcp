@@ -27,13 +27,17 @@
 | 并行会话管理 | `stata_session` | 透传上游会话管理（`list` / `destroy`），多任务并行时通过不同 `session_id` 隔离 |
 | Help 与命令探查 | `stata_help`、`stata_search_help`、`stata_which` | 离线读取本机 Stata/SSC `.sthlp` 文档，自动解析 `*help_alias.maint` 别名（如 `reg` → `regress`）与 `{INCLUDE}`、按章节（`syntax`/`options`/`examples`/`results`）提取；检查命令是否安装及 `.ado` 版本头 |
 | 精确报错定位 | `stata_diagnose_error` | 解析 `#delimit ;`、`///` 续行、嵌套块注释与宏展开命令，跳过 `capture` 吞掉的错误，将致命 `r(NNN);` 精准映射到 1-based 行号、源码上下文与修复建议 |
-| 破除循环与向量化 | `stata_lint_do`、`stata_vectorize_guide` | 静态拦截 `1/_N` 观测循环、`levelsof + foreach`、手工虚拟变量、`preserve` 循环、缺失值 `>` 陷阱与括号/引号不匹配；提供 11 类对照式向量化方案（`bysort`/`egen`/`collapse`/`i.var`/`L.`/`frames`/`mata`） |
-| 内存数据探查 | `stata_inspect_data`、`stata_describe`、`stata_stored_results` | 直连 `/view_data` 预览数据表行列与类型；只读执行 `describe` + `summarize` + `misstable summarize`；查看 `e()`、`r()`、`c()` 与 `estimates dir` |
+| 破除循环与向量化 | `stata_lint_do`、`stata_vectorize_guide` | 静态拦截 `1/_N`、`levelsof/egen group` 循环、前向填充、宽表年份、跨变量缺失替换、`postfile`、`preserve` 循环、未排序下标与缺失值 `>` 陷阱；提供 15 类经真实 Stata 19.5 验证的向量化方案 |
+| 内存数据探查 | `stata_inspect_data`、`stata_describe`、`stata_stored_results` | 直连 `/view_data` 预览数据表行列与类型；只读执行 `describe` + `summarize` + `misstable summarize`（支持内存数据或指定 `.dta` 文件）；查看 `e()`、`r()`、`c()` 与 `estimates dir` |
 
-标准工作流：
+标准调用工作流（5 步闭环）：
 
 ```text
-查语法(stata_help / stata_which) -> 体检防循环(stata_lint_do) -> 异步执行(stata_run_file) -> 增量追步(stata_job_tail) -> 报错精确定位(stata_diagnose_error / stata_run_lines) -> 数据核验(stata_describe / stata_stored_results)
+1. 读取数据 (stata_describe / stata_inspect_data)
+   -> 2. 查询命令存在与帮助 (stata_which / stata_search_help / stata_help)
+   -> 3. 撰写代码并运行 (stata_run_file / stata_run_selection / stata_job_tail)
+   -> 4. 出错检查并重新运行 (stata_diagnose_error / stata_run_lines)
+   -> 5. 破除循环增强可读性 (stata_lint_do / stata_vectorize_guide)
 ```
 
 核心运行时与分析约定：
@@ -160,7 +164,7 @@ MCP 客户端 ──stdio──> bin/stata-mcp-bridge.py ──HTTP(127.0.0.1:40
 | 客户端接入 | 一键切换 `stdio` / `Streamable HTTP`、自定义根键/条目名/超时、Dry-Run 预览与安全合并写入、17 工具分类检索卡片 |
 | 作业与报错 | Master-Detail 查看实时 `journal.log`、一键停止运行中作业；失败作业高亮原 `.do` 报错行号、源码上下文、`r(NNN)` 建议并直跳 Help |
 | Help 速查 | 离线检索与渲染本机 Stata/SSC `.sthlp`，支持别名解析、章节过滤、相关主题（Also see）与可点击模糊搜索列表 |
-| 反循环体检 | 文件/粘贴代码静态检查、地道度评分（0–100）、精确行号改写复制，内置 11 套 Stata 向量化对照速查表 |
+| 反循环体检 | 文件/粘贴代码静态检查、地道度评分（0–100）、精确行号改写复制，内置 15 套经真实 Stata 验证的向量化对照速查表 |
 | 诊断与日志 | 平台/工具链/状态目录/作业数概览、4 类日志实时查看（`gateway.log`、`server.log`、`*.console.log`）、Doctor JSON 快照与安全卸载 |
 
 ### 私有状态目录与隐私保证
@@ -191,9 +195,9 @@ MCP 客户端 ──stdio──> bin/stata-mcp-bridge.py ──HTTP(127.0.0.1:40
 运行全套 Python 与桌面端单元测试（零 Stata 实机依赖，可在 CI 中直接跑完）：
 
 ```bash
-python3 -m unittest discover -s tests -v              # 20 项核心 CLI、分析引擎、错误定位与 Windows 兼容回归测试
+python3 -m unittest discover -s tests -v              # 核心 CLI、分析引擎、报错定位、Windows 兼容与实机 Stata 等价测试（无 Stata 自动跳过）
 pnpm --dir desktop install --no-frozen-lockfile
-pnpm --dir desktop test                               # 10 项桌面端 CoreService、环境变量去重、UI 与超时测试
+pnpm --dir desktop test                               # 桌面端 CoreService、页面配置与 UI 回归测试
 pnpm --dir desktop run prepare:core                   # 组装内置 stata-mcp-core 载荷
 pnpm --dir desktop run verify:core                    # 校验 13 个必需核心脚本与模块完整
 ```
@@ -259,7 +263,8 @@ stata-mcp/
 │   └── ui.py                          # 终端着色输出辅助
 ├── tests/
 │   ├── test_analysis.py               # Help 引擎、报错行号定位与反循环拦截测试
-│   └── test_gateway_and_cli.py        # CLI、配置合并、Windows 进程/端口与网关作业测试
+│   ├── test_gateway_and_cli.py        # CLI、配置合并、5 步流程指令与网关作业测试
+│   └── test_stata_real_loops.py       # 15 类破除循环模式的真实 Stata 等价性与性能基准测试
 ├── install.py                         # 统一 CLI 入口（纯标准库）
 ├── LICENSE                            # MIT License
 └── README.md

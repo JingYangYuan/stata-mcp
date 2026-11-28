@@ -67,6 +67,11 @@ class HelpEngineTests(unittest.TestCase):
         self.assertTrue(wres["found"])
         self.assertIn("1.2.3", wres["version_header"])
 
+        alias_wres = analysis.which_local("reg", stata_path=str(self.stata_root))
+        self.assertTrue(alias_wres["found"])
+        self.assertEqual(alias_wres["resolved_command"], "regress")
+        self.assertEqual(alias_wres["alias_of"], "regress")
+
 
 class ErrorLocatorTests(unittest.TestCase):
     def test_parse_statements_delimit_comments_and_continuations(self):
@@ -199,6 +204,65 @@ class AntiLoopLinterTests(unittest.TestCase):
         res2 = analysis.vectorize_guide(pattern="滞后")
         ids2 = {r["id"] for r in res2["recipes"]}
         self.assertIn("lag_lead_diff", ids2)
+
+        all_res = analysis.vectorize_guide(pattern="all")
+        self.assertEqual(len(all_res["recipes"]), 15)
+
+    def test_detects_prefixed_forv_while_rename_egen_group_and_traps(self):
+        code = (
+            "qui forv i = 1/`=_N' {\n"
+            "    replace z = x[`i'] in `i'\n"
+            "}\n"
+            "local i = 1\n"
+            "while `i' <= _N {\n"
+            "    replace x = x[`i'-1] if missing(x) in `i'\n"
+            "    local ++i\n"
+            "}\n"
+            "egen gid = group(industry)\n"
+            "qui su gid\n"
+            "forv g = 1/`r(max)' {\n"
+            "    su sales if gid == `g'\n"
+            "}\n"
+            "foreach v of varlist v_* {\n"
+            "    local new = subinstr(\"`v'\", \"v_\", \"col_\", 1)\n"
+            "    rename `v' `new'\n"
+            "}\n"
+            "foreach v of varlist q1-q5 {\n"
+            "    replace `v' = 0 if missing(`v')\n"
+            "}\n"
+            "forvalues y = 2019/2022 {\n"
+            "    gen g_`y' = sales_`y' - sales_2018\n"
+            "}\n"
+            "gen lag_unprotected = y[_n-1]\n"
+            "keep if price > cutoff\n"
+        )
+        res = analysis.lint_do_code(code, strict=True)
+        rules = {i["rule_id"] for i in res["issues"]}
+        for expected in (
+            "ANTI_LOOP_OBS_INDEX",
+            "ANTI_LOOP_CARRYFORWARD",
+            "ANTI_LOOP_LEVELSOF",
+            "ANTI_LOOP_BULK_RENAME",
+            "ANTI_LOOP_MV_RECODE",
+            "ANTI_LOOP_WIDE_YEAR",
+            "PITFALL_UNSORTED_SUBSCRIPT",
+            "PITFALL_MISSING_GT",
+        ):
+            self.assertIn(expected, rules, f"Missing {expected} in {rules}")
+
+    def test_clean_file_append_and_bysort_outcome_loop_not_flagged(self):
+        clean = (
+            "xtset id year\n"
+            "foreach f in a.dta b.dta {\n"
+            "    append using \"`f'\"\n"
+            "}\n"
+            "foreach y in sales profit {\n"
+            "    bysort id (year): gen d_`y' = `y' - `y'[_n-1]\n"
+            "}\n"
+        )
+        res = analysis.lint_do_code(clean)
+        self.assertEqual(res["anti_loop_count"], 0)
+        self.assertEqual(res["idiomatic_score"], 100)
 
 
 if __name__ == "__main__":

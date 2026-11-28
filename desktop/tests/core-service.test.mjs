@@ -94,6 +94,12 @@ test("renderer HTML contains all 6 tabs and every ID referenced by renderer.mjs"
   for (const id of new Set(ids)) {
     assert.ok(html.includes(`id="${id}"`), `renderer.mjs references missing DOM id: ${id}`);
   }
+
+  for (const extraId of ["global-progress-bar", "app-snackbar", "workflow-stepper"]) {
+    assert.ok(html.includes(`id="${extraId}"`), `missing UI id: ${extraId}`);
+  }
+  assert.ok(html.includes("data-motion-choice"));
+  assert.ok(html.includes("data-density-choice"));
 });
 
 test("CoreService rejects concurrent runAction while an action is active", async () => {

@@ -150,6 +150,26 @@ class GatewayJobErrorTests(unittest.TestCase):
             self.assertIn("[ERROR LOCATION]", job.result_text())
             self.assertTrue(Path(job.error_path).is_file())
 
+    def test_gateway_instructions_enforce_five_step_workflow(self):
+        jobs_mod = _load_jobs_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = jobs_mod.Config(jobs_mod.parse_args(["--home", tmp]))
+            try:
+                server = jobs_mod.build_server(cfg)
+            except ImportError:
+                self.skipTest("mcp package not installed in current Python")
+            inst = getattr(server, "instructions", "") or ""
+            idx1 = inst.find("READ & INSPECT DATA FIRST")
+            idx2 = inst.find("CHECK COMMAND AVAILABILITY & READ HELP")
+            idx3 = inst.find("WRITE CODE & RUN TO COMPLETE THE TASK")
+            idx4 = inst.find("DIAGNOSE ERRORS & RE-RUN ON FAILURE")
+            idx5 = inst.find("ELIMINATE LOOPS & ENHANCE READABILITY")
+            self.assertTrue(all(i >= 0 for i in (idx1, idx2, idx3, idx4, idx5)), inst)
+            self.assertLess(idx1, idx2)
+            self.assertLess(idx2, idx3)
+            self.assertLess(idx3, idx4)
+            self.assertLess(idx4, idx5)
+
 
 class WindowsRuntimeAndBridgeTests(unittest.TestCase):
     def test_is_alive_handles_invalid_and_self_pid(self):

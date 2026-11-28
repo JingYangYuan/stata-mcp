@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="system">
+<html lang="zh-CN" data-theme="system" data-motion="full" data-density="comfortable">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -8,14 +8,26 @@
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
+  <div class="m3-progress" id="global-progress-bar" aria-hidden="true">
+    <div class="m3-progress-bar"></div>
+  </div>
   <div class="app-shell">
     <aside class="sidebar">
       <div class="sidebar-drag-spacer"></div>
       <div class="brand">
-        <div class="brand-badge">SM</div>
+        <div class="brand-badge" aria-hidden="true">
+          <svg viewBox="0 0 40 40" width="36" height="36">
+            <rect x="1.5" y="1.5" width="37" height="37" rx="10" fill="#ffffff" stroke="#dadce0" stroke-width="1.2"/>
+            <rect x="8.5" y="20" width="5.2" height="9.2" rx="1.8" fill="#FBBC04"/>
+            <rect x="15.8" y="15" width="5.2" height="14.2" rx="1.8" fill="#34A853"/>
+            <rect x="23.1" y="9.8" width="5.2" height="19.4" rx="1.8" fill="#4285F4"/>
+            <path d="M9 16.5 L16.8 11.4 L23.6 8.3 L29.6 8.8" fill="none" stroke="#EA4335" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle cx="30" cy="8.8" r="2.8" fill="#4285F4" stroke="#ffffff" stroke-width="1.1"/>
+          </svg>
+        </div>
         <div>
           <div class="brand-title">Stata MCP Studio</div>
-          <div class="brand-sub" id="brand-sub-version">v1.2.4 · 17 Tools</div>
+          <div class="brand-sub" id="brand-sub-version">v1.3.0 · 17 Tools</div>
         </div>
       </div>
 
@@ -58,10 +70,31 @@
           </div>
         </div>
 
-        <div class="theme-switch" role="group" aria-label="外观主题">
-          <button class="theme-btn" data-theme-choice="light">浅色</button>
-          <button class="theme-btn active" data-theme-choice="system">自动</button>
-          <button class="theme-btn" data-theme-choice="dark">深色</button>
+        <div class="page-prefs">
+          <div class="pref-row">
+            <span class="pref-label">主题</span>
+            <div class="theme-switch" role="group" aria-label="外观主题">
+              <button class="theme-btn" data-theme-choice="light">浅色</button>
+              <button class="theme-btn active" data-theme-choice="system">自动</button>
+              <button class="theme-btn" data-theme-choice="dark">深色</button>
+            </div>
+          </div>
+          <div class="pref-grid">
+            <div class="pref-mini">
+              <span class="pref-label">动效</span>
+              <div class="mini-switch" role="group" aria-label="动效偏好">
+                <button class="mini-btn active" data-motion-choice="full">标准</button>
+                <button class="mini-btn" data-motion-choice="reduced">减弱</button>
+              </div>
+            </div>
+            <div class="pref-mini">
+              <span class="pref-label">密度</span>
+              <div class="mini-switch" role="group" aria-label="界面密度">
+                <button class="mini-btn active" data-density-choice="comfortable">舒适</button>
+                <button class="mini-btn" data-density-choice="compact">紧凑</button>
+              </div>
+            </div>
+          </div>
         </div>
 
         <button class="btn btn-ghost btn-sm full-width" id="btn-open-home">打开状态目录</button>
@@ -84,6 +117,45 @@
               <button class="btn btn-ghost" id="btn-refresh-overview">刷新状态</button>
             </div>
           </header>
+
+          <!-- Canonical 5-Step Workflow -->
+          <article class="card workflow-card" aria-label="Stata MCP 标准调用流程">
+            <div class="workflow-accent-bar"></div>
+            <div class="card-header-row wrap">
+              <div>
+                <h2>Stata MCP 标准 5 步调用流程</h2>
+                <p class="card-sub">先查数据与命令帮助，再执行、纠错并消除低效循环（点击步骤可直达对应工作区）</p>
+              </div>
+              <span class="pill-badge">Canonical Flow</span>
+            </div>
+            <div class="workflow-steps" id="workflow-stepper">
+              <button type="button" class="workflow-step" data-goto-tab="config" data-filter-cat="数据探查">
+                <span class="wf-num g-blue">1</span>
+                <span class="wf-title">读取数据</span>
+                <span class="wf-tools">describe / inspect</span>
+              </button>
+              <button type="button" class="workflow-step" data-goto-tab="help">
+                <span class="wf-num g-green">2</span>
+                <span class="wf-title">查命令与帮助</span>
+                <span class="wf-tools">which / help</span>
+              </button>
+              <button type="button" class="workflow-step" data-goto-tab="jobs">
+                <span class="wf-num g-yellow">3</span>
+                <span class="wf-title">撰写运行</span>
+                <span class="wf-tools">run_file / job_tail</span>
+              </button>
+              <button type="button" class="workflow-step" data-goto-tab="jobs" data-jobs-filter="failed">
+                <span class="wf-num g-red">4</span>
+                <span class="wf-title">报错排查重跑</span>
+                <span class="wf-tools">diagnose / run_lines</span>
+              </button>
+              <button type="button" class="workflow-step" data-goto-tab="lint">
+                <span class="wf-num g-blue">5</span>
+                <span class="wf-title">破除循环提可读</span>
+                <span class="wf-tools">lint_do / vectorize</span>
+              </button>
+            </div>
+          </article>
 
           <!-- Step 1 -->
           <article class="card wizard-card">
@@ -407,7 +479,7 @@
             </div>
             <div class="segmented" id="lint-mode-seg">
               <button type="button" class="seg-btn active" data-lint-mode="check">代码 / 文件体检</button>
-              <button type="button" class="seg-btn" data-lint-mode="recipes">11 套向量化速查表</button>
+              <button type="button" class="seg-btn" data-lint-mode="recipes">15 套向量化速查表</button>
             </div>
           </header>
 
@@ -445,7 +517,7 @@ keep if sales > 0</textarea>
           <div id="lint-view-recipes" class="view-stack hidden">
             <div class="card">
               <div class="card-header-row">
-                <h2>11 类 Stata 向量化替代方案</h2>
+                <h2>15 类 Stata 向量化替代方案</h2>
                 <input type="text" class="search-inline" id="recipe-filter-input" placeholder="过滤场景（如 分组 / 滞后 / frame）…" />
               </div>
               <div id="recipes-grid" class="recipes-stack"></div>
@@ -516,6 +588,7 @@ keep if sales > 0</textarea>
     </main>
   </div>
 
+  <div class="m3-snackbar" id="app-snackbar" role="status" aria-live="polite"></div>
   <script type="module" src="./renderer.mjs"></script>
 </body>
 </html>

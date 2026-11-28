@@ -35,7 +35,7 @@ function createWindow() {
     show: false,
     autoHideMenuBar: !isMac,
     title: "Stata MCP Studio",
-    backgroundColor: nativeTheme.shouldUseDarkColors ? "#111318" : "#f4f6f9",
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#131314" : "#f8f9fa",
     icon: iconPath,
     ...(isMac ? { titleBarStyle: "hiddenInset", trafficLightPosition: { x: 16, y: 16 } } : {}),
     webPreferences: {
