@@ -1,44 +1,31 @@
 const api = window.stataMcpDesktop;
 
-const MCP_TOOLS_CATALOG = [
-  { name: "stata_inspect_data", cat: "数据探查", desc: "[步骤1] 直连 /view_data 查看内存数据集行数、列名、类型与样本预览" },
-  { name: "stata_describe", cat: "数据探查", desc: "[步骤1] 只读运行 describe + summarize + misstable summarize（支持内存或指定 .dta 文件）" },
-  { name: "stata_stored_results", cat: "数据探查", desc: "[步骤1/3] 查看内存中的 e()、r()、c() 与已保存估计结果 estimates dir" },
-  { name: "stata_which", cat: "Help 参考", desc: "[步骤2] 检查命令是否已安装（自动解析别名、built-in 或 .ado 路径与版本头）" },
-  { name: "stata_search_help", cat: "Help 参考", desc: "[步骤2] 按关键词检索已安装的 base / SSC help 文件与命令别名" },
-  { name: "stata_help", cat: "Help 参考", desc: "[步骤2] 自动解析别名与 SMCL 格式的官方/SSC help 文档（支持按章节提取）" },
-  { name: "stata_run_file", cat: "执行与作业", desc: "[步骤3] 运行 .do 文件（短任务直出，长任务异步 job_id，支持 lint=True，出错自带行号定位）" },
-  { name: "stata_run_selection", cat: "执行与作业", desc: "[步骤3] 运行选中代码片段，短任务直出结果、长任务返回 job_id" },
-  { name: "stata_job_status", cat: "执行与作业", desc: "[步骤3] 查询作业状态、步骤数、耗时与失败时的 error_code / error_line" },
-  { name: "stata_job_tail", cat: "执行与作业", desc: "[步骤3] 按 offset 增量读取步骤预览 (steps) 或完整日志 (full)" },
-  { name: "stata_job_list", cat: "执行与作业", desc: "[步骤3] 列出最近 Stata 作业及摘要" },
-  { name: "stata_job_cancel", cat: "执行与作业", desc: "[步骤3] 向引擎发送 /stop_execution 终止运行中的作业" },
-  { name: "stata_session", cat: "会话管理", desc: "[步骤3] 列出或销毁并行 Stata 会话 (session_id)" },
-  { name: "stata_diagnose_error", cat: "报错定位", desc: "[步骤4] 定位失败作业（或任意日志）在 .do 中的精确行号、上下文与修复建议" },
-  { name: "stata_run_lines", cat: "执行与作业", desc: "[步骤4] 运行指定行区间 [start_line, end_line] 快速复测，报错自动映射回原文件行号" },
-  { name: "stata_lint_do", cat: "破除循环", desc: "[步骤5] 拦截 1/_N、levelsof+foreach、前向填充、mvencode、宽表年份、preserve 循环等低效模式" },
-  { name: "stata_vectorize_guide", cat: "破除循环", desc: "[步骤5] 提供 15 类经真实 Stata 19.5 验证的向量化替代方案（bysort / egen / frames / mata 等）" },
-];
-
-const SAMPLE_LINT_CODE = `levelsof industry, local(inds)
-foreach g of local inds {
-    summarize sales if industry == \`g'
-    replace ind_mean = r(mean) if industry == \`g'
-}
-keep if sales > 0`;
+const RESEARCH_WORKFLOW_PROMPT = [
+  "请使用已连接的 stata-mcp 工具完成本项目的 Stata 实证任务，严格遵循 5 步标准工作流：",
+  "1. 读取数据：先用 stata_describe / stata_inspect_data 了解变量名、类型、观测值与缺失情况；",
+  "2. 核查命令与帮助：编写代码前先用 stata_which / stata_help 核对官方或 SSC 命令语法与选项；",
+  "3. 运行任务：长任务优先用 stata_run_file + stata_job_tail 追踪每一步输出；",
+  "4. 报错排查重跑：一旦报错，用 stata_diagnose_error 定位精确行号与原因，再用 stata_run_lines 局部验证；",
+  "5. 破除循环提可读：提交前运行 stata_lint_do，按 stata_vectorize_guide 尽量使用 bysort / egen / 因子变量 / frame 替代低效观测值循环。",
+].join("\n");
 
 const stateUI = {
+  activeTab: "config",
   transport: "stdio",
-  toolsCategory: "全部",
   jobsFilter: "all",
-  selectedJobId: "",
   jobsCache: [],
-  helpSection: "",
+  expandedJobs: new Set(),
+  jobDetailsCache: new Map(),
   logName: "server.log",
-  allRecipes: [],
   actionRunning: false,
   userEditedPort: false,
   userEditedTimeout: false,
+  configSnippetText: "{}",
+  agents: [],
+  currentProjectInfo: null,
+  pinnedProjects: [],
+  recentProjects: [],
+  pollTimer: null,
 };
 
 function $(id) {
@@ -71,22 +58,18 @@ function setGlobalBusy(active) {
   if (bar) bar.classList.toggle("active", _busyDepth > 0);
 }
 
-function flashCopied(btn, originalLabel) {
-  if (!btn) return;
-  const prev = originalLabel || btn.textContent;
-  btn.textContent = "已复制 ✓";
+async function copyWithFeedback(text, btn) {
+  await api.copyText(text);
   showSnackbar("已复制到剪贴板");
+  if (!btn) return;
+  const prev = btn.textContent;
+  btn.textContent = "已复制 ✓";
   setTimeout(() => {
     btn.textContent = prev;
   }, 1400);
 }
 
-async function copyWithFeedback(text, btn) {
-  await api.copyText(text);
-  flashCopied(btn);
-}
-
-/* ── Theme, Motion, Density & Platform ──────────────────────────────── */
+/* ── Theme & Platform ───────────────────────────────────────────────── */
 function applyTheme(choice) {
   const valid = ["light", "system", "dark"].includes(choice) ? choice : "system";
   document.documentElement.setAttribute("data-theme", valid);
@@ -96,73 +79,45 @@ function applyTheme(choice) {
   });
 }
 
-function applyMotion(choice) {
-  const valid = ["full", "reduced"].includes(choice) ? choice : "full";
-  document.documentElement.setAttribute("data-motion", valid);
-  localStorage.setItem("stata-mcp-motion", valid);
-  document.querySelectorAll("[data-motion-choice]").forEach((b) => {
-    b.classList.toggle("active", b.dataset.motionChoice === valid);
-  });
-}
-
-function applyDensity(choice) {
-  const valid = ["comfortable", "compact"].includes(choice) ? choice : "comfortable";
-  document.documentElement.setAttribute("data-density", valid);
-  localStorage.setItem("stata-mcp-density", valid);
-  document.querySelectorAll("[data-density-choice]").forEach((b) => {
-    b.classList.toggle("active", b.dataset.densityChoice === valid);
-  });
-}
-
-function attachMaterialRipple() {
-  document.addEventListener("pointerdown", (e) => {
-    if (document.documentElement.getAttribute("data-motion") === "reduced") return;
-    const target = e.target.closest(".btn, .nav-btn, .workflow-step");
-    if (!target || target.disabled) return;
-    const rect = target.getBoundingClientRect();
-    const size = Math.max(rect.width, rect.height);
-    const ripple = document.createElement("span");
-    ripple.className = "md-ripple";
-    ripple.style.width = `${size}px`;
-    ripple.style.height = `${size}px`;
-    ripple.style.left = `${e.clientX - rect.left - size / 2}px`;
-    ripple.style.top = `${e.clientY - rect.top - size / 2}px`;
-    target.appendChild(ripple);
-    setTimeout(() => ripple.remove(), 520);
-  });
-}
-
-function initPlatformAndTheme() {
-  if (api.platform) {
-    document.body.setAttribute("data-platform", api.platform);
+function initThemeAndPlatform() {
+  if (api?.platform) {
+    document.documentElement.classList.add(`platform-${api.platform}`);
   }
   applyTheme(localStorage.getItem("stata-mcp-theme") || "system");
-  const prefersReduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
-  applyMotion(localStorage.getItem("stata-mcp-motion") || (prefersReduced ? "reduced" : "full"));
-  applyDensity(localStorage.getItem("stata-mcp-density") || "comfortable");
-
   document.querySelectorAll(".theme-btn").forEach((btn) => {
-    btn.addEventListener("click", () => applyTheme(btn.dataset.themeChoice));
-  });
-  document.querySelectorAll("[data-motion-choice]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      applyMotion(btn.dataset.motionChoice);
-      showSnackbar(btn.dataset.motionChoice === "reduced" ? "已切换为减弱动效" : "已启用 Material 标准动效");
+      applyTheme(btn.dataset.themeChoice);
     });
   });
-  document.querySelectorAll("[data-density-choice]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      applyDensity(btn.dataset.densityChoice);
-      showSnackbar(btn.dataset.densityChoice === "compact" ? "已切换为紧凑布局" : "已切换为舒适布局");
-    });
-  });
-  attachMaterialRipple();
 }
 
-/* ── Tab Navigation ─────────────────────────────────────────────────── */
+/* ── Tabs & Drawers / Modals ────────────────────────────────────────── */
+function openAdvancedDrawer() {
+  $("drawer-backdrop").classList.remove("hidden");
+  $("advanced-drawer").classList.remove("hidden");
+  refreshConfigSnippet();
+}
+
+function closeAdvancedDrawer() {
+  $("drawer-backdrop").classList.add("hidden");
+  $("advanced-drawer").classList.add("hidden");
+}
+
+function openLogModal() {
+  $("log-modal-backdrop").classList.remove("hidden");
+  $("log-modal").classList.remove("hidden");
+  refreshLogs();
+}
+
+function closeLogModal() {
+  $("log-modal-backdrop").classList.add("hidden");
+  $("log-modal").classList.add("hidden");
+}
+
 function switchTab(tabId) {
-  const validTabs = ["overview", "config", "jobs", "help", "lint", "doctor"];
-  const target = validTabs.includes(tabId) ? tabId : "overview";
+  const validTabs = ["config", "terminal", "monitor"];
+  const target = validTabs.includes(tabId) ? tabId : "config";
+  stateUI.activeTab = target;
   localStorage.setItem("stata-mcp-active-tab", target);
   document.querySelectorAll(".nav-btn").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.tab === target);
@@ -170,30 +125,20 @@ function switchTab(tabId) {
   document.querySelectorAll(".tab-panel").forEach((panel) => {
     panel.classList.toggle("active", panel.id === `tab-${target}`);
   });
-  if (target === "config") refreshConfigSnippet();
-  if (target === "jobs") refreshJobs();
-  if (target === "doctor") refreshLogs();
-  if (target === "lint" && !stateUI.allRecipes.length) loadAllRecipes();
+  if (target === "terminal") refreshTerminalPage();
+  if (target === "monitor") refreshJobs();
 }
 
-function openHelpForTopic(topic) {
-  if (!topic) return;
-  $("help-topic-input").value = topic;
-  switchTab("help");
-  lookupHelp();
-}
-
-/* ── Console Drawer ─────────────────────────────────────────────────── */
+/* ── Console Output ─────────────────────────────────────────────────── */
 function appendConsole(text) {
-  const drawer = $("console-drawer");
-  if (drawer && !drawer.open) drawer.open = true;
+  $("console-card").classList.remove("hidden");
   const box = $("action-console");
   if (box.textContent === "等待操作…") box.textContent = "";
   box.textContent += text;
   box.scrollTop = box.scrollHeight;
 }
 
-/* ── 1. Overview & 3-Step Wizard ────────────────────────────────────── */
+/* ── Page 1: Config & Overview ──────────────────────────────────────── */
 function _syncStataSelectToInput(cands) {
   const select = $("in-stata-select");
   const cur = $("in-stata-path").value.trim().toLowerCase();
@@ -204,59 +149,52 @@ function _syncStataSelectToInput(cands) {
 }
 
 async function refreshOverview() {
-  const refreshBtn = $("btn-refresh-overview");
-  if (refreshBtn) {
-    refreshBtn.disabled = true;
-    refreshBtn.textContent = "检测中…";
-  }
+  const btn = $("btn-refresh-overview");
+  if (btn) btn.disabled = true;
   setGlobalBusy(true);
   try {
     const res = await api.getOverview({ stataPath: $("in-stata-path").value.trim() || undefined });
     if (res.appVersion) {
-      $("brand-sub-version").textContent = `v${res.appVersion} · 17 Tools`;
+      $("brand-sub-version").textContent = `v${res.appVersion} · 单端口`;
     }
     const doc = res.doctor || {};
     const rt = doc.runtime || {};
     const eng = rt.engine || {};
     const st = doc.state || {};
     const cands = doc.stata_candidates || [];
-
     const gwOk = Boolean(rt.healthy);
     const engOk = Boolean(eng.healthy);
     const installed = Boolean(doc.installed);
-    const unified = st.mode === "unified" || eng.unified || rt.mode === "unified" || (!rt.healthy && !eng.healthy && doc.bundled_server);
+    const port = rt.port || st.port || 4001;
 
-    // Sidebar live dots
-    $("sidebar-gateway-pill").className = `status-dot-row ${gwOk ? "ok" : "bad"}`;
-    $("sidebar-gateway-pill").querySelector(".dot-label").textContent = `Stata MCP :${rt.port || 4001}`;
-    $("sidebar-engine-pill").className = `status-dot-row ${engOk ? "ok" : "bad"}`;
-    $("sidebar-engine-pill").querySelector(".dot-label").textContent = unified
-      ? "内置引擎 · 单端口"
-      : `Engine :${eng.port || 4001}`;
+    // Sidebar status indicator
+    $("sidebar-service-pill").className = `status-dot-row ${gwOk && engOk ? "ok" : "bad"}`;
+    $("sidebar-service-pill").querySelector(".dot-label").textContent = `Stata MCP :${port}`;
 
-    // Overall pill
-    const overall = $("ov-overall-badge");
+    // Header badge + service row meta
+    const badge = $("cfg-status-badge");
     if (gwOk && engOk) {
-      overall.textContent = "服务运行中";
-      overall.className = "pill-badge ok";
+      badge.textContent = "运行中";
+      badge.className = "pill-badge ok";
+      $("cfg-service-meta").textContent = `127.0.0.1:${port} · 在线 (v${st.installer_version || res.appVersion || "1.4.0"})`;
     } else if (installed) {
-      overall.textContent = "已安装 · 未启动";
-      overall.className = "pill-badge warn";
+      badge.textContent = "已安装 · 未启动";
+      badge.className = "pill-badge warn";
+      $("cfg-service-meta").textContent = `127.0.0.1:${port} · 未启动 (v${st.installer_version || "1.4.0"})`;
     } else {
-      overall.textContent = "待安装";
-      overall.className = "pill-badge";
+      badge.textContent = "待安装";
+      badge.className = "pill-badge";
+      $("cfg-service-meta").textContent = `127.0.0.1:${port} · 尚未部署运行时`;
     }
 
-    // Step 1
+    // Stata candidates selector
     const select = $("in-stata-select");
     select.innerHTML = "";
     if (!cands.length) {
       const opt = document.createElement("option");
       opt.value = "";
-      opt.textContent = "未自动发现 Stata，请在下方手动指定根目录";
+      opt.textContent = "未自动发现 Stata，请在下方手动选择路径";
       select.appendChild(opt);
-      $("step1-badge").textContent = "需指定目录";
-      $("step1-badge").className = "pill-badge warn";
     } else {
       for (const c of cands) {
         const opt = document.createElement("option");
@@ -267,115 +205,55 @@ async function refreshOverview() {
       if (!$("in-stata-path").value.trim()) {
         $("in-stata-path").value = st.stata_path || cands[0].path;
       }
-      const activeCand = _syncStataSelectToInput(cands);
-      if (activeCand && activeCand.valid !== false) {
-        $("step1-badge").textContent = `已就绪 · ${(activeCand.edition || "").toUpperCase()} ${activeCand.version || ""}`.trim();
-        $("step1-badge").className = "pill-badge ok";
-      } else if ($("in-stata-path").value.trim()) {
-        $("step1-badge").textContent = "目录无效或未检测到 Stata";
-        $("step1-badge").className = "pill-badge warn";
-      } else {
-        $("step1-badge").textContent = "需指定目录";
-        $("step1-badge").className = "pill-badge warn";
-      }
+      _syncStataSelectToInput(cands);
     }
 
-    $("chip-python").textContent = `Python ${doc.python?.version || "?"}`;
-    $("chip-uv").textContent = `uv: ${doc.tools?.uv ? "已装" : "未装 (可选)"}`;
-    $("chip-git").textContent = doc.bundled_server
-      ? "内置服务端 v0.5.3 (免 Git)"
-      : `git: ${doc.tools?.git ? "已装" : "未装"}`;
-    $("chip-home").textContent = res.stateHome || doc.home || "~/.stata-mcp";
+    $("cfg-env-meta").textContent =
+      `Python ${doc.python?.version || "?"} · uv ${doc.tools?.uv ? "可用" : "可选"} · 内置引擎 v0.5.3`;
 
-    // Step 2
-    if (installed) {
-      $("step2-badge").textContent = `已安装 v${st.installer_version || "1.4.0"}`;
-      $("step2-badge").className = "pill-badge ok";
-    } else {
-      $("step2-badge").textContent = "尚未安装";
-      $("step2-badge").className = "pill-badge";
-    }
+    $("btn-install").textContent = installed ? "重装 / 升级" : "一键安装";
     if (st.port && !stateUI.userEditedPort) $("in-port").value = st.port;
     if (st.default_timeout && !stateUI.userEditedTimeout) $("in-timeout").value = st.default_timeout;
 
-    // Step 3
-    $("ov-gateway-status").textContent = gwOk ? "运行中" : "未运行";
-    $("ov-gateway-meta").textContent = `${rt.host || "127.0.0.1"}:${rt.port || 4001}` + (rt.pid ? ` · PID ${rt.pid}` : "");
-    $("ov-engine-status").textContent = engOk ? "运行中" : "未运行";
-    $("ov-engine-meta").textContent = unified
-      ? `融合于 :${rt.port || 4001} · 内置引擎`
-      : `:${eng.port || 4001}` + (eng.pid ? ` · PID ${eng.pid}` : "");
-    if (gwOk && engOk) {
-      $("step3-badge").textContent = unified ? "单端口在线" : "双进程在线";
-      $("step3-badge").className = "pill-badge ok";
-    } else if (gwOk || engOk) {
-      $("step3-badge").textContent = "部分在线";
-      $("step3-badge").className = "pill-badge warn";
-    } else {
-      $("step3-badge").textContent = "未运行";
-      $("step3-badge").className = "pill-badge";
-    }
-
-    // Warn when another process already answers on port without our installation
+    // External port conflict check
     const portConflict = !installed && gwOk;
     $("port-conflict-banner").classList.toggle("hidden", !portConflict);
     if (portConflict) {
-      $("port-conflict-text").textContent = `${rt.host || "127.0.0.1"}:${rt.port || 4001} 已有非本程序启动的服务在响应，直接启动可能会冲突。`;
+      $("port-conflict-text").textContent = `${rt.host || "127.0.0.1"}:${port} 已被其他服务占用`;
     }
 
-    // Doctor Tab Metrics
-    $("doc-platform").textContent = `${doc.platform || "?"} · ${doc.arch || "?"}`;
-    $("doc-stata-count").textContent = `发现 ${cands.length} 个 Stata 候选`;
-    $("doc-python").textContent = `Python ${doc.python?.version || "?"}`;
-    $("doc-tools").textContent = `uv: ${doc.tools?.uv ? "✓" : "×"} · git: ${doc.tools?.git ? "✓" : "×"}`;
-    $("doc-home").textContent = res.stateHome || doc.home || "~/.stata-mcp";
-    $("doc-installed").textContent = installed ? "state.json 正常" : "尚未安装";
-    $("doc-jobs").textContent = `${doc.jobs_count ?? 0} 个作业`;
-    $("doc-problems").textContent = doc.problems ? `${doc.problems} 项需注意` : "状态正常";
     $("doctor-json-box").textContent = JSON.stringify(doc, null, 2);
   } catch (err) {
-    $("ov-overall-badge").textContent = "检测异常";
-    $("ov-overall-badge").className = "pill-badge bad";
+    $("cfg-status-badge").textContent = "检测失败";
+    $("cfg-status-badge").className = "pill-badge bad";
     appendConsole(`\n[错误] 刷新状态失败: ${err?.message || err}\n`);
   } finally {
     setGlobalBusy(false);
-    if (refreshBtn) {
-      refreshBtn.disabled = false;
-      refreshBtn.textContent = "刷新状态";
-    }
+    if (btn) btn.disabled = false;
   }
 }
 
-const ACTION_BTN_MAP = {
-  install: "btn-install",
-  refresh: "btn-refresh-bin",
-  start: "btn-start",
-  stop: "btn-stop",
-  verify: "btn-verify",
-  uninstall: "btn-uninstall",
-};
+const ACTION_BTN_IDS = ["btn-install", "btn-start", "btn-stop", "btn-verify", "btn-refresh-bin", "btn-uninstall"];
 
-function setActionBusy(busy, activeAction = "") {
+function setActionBusy(busy) {
   stateUI.actionRunning = busy;
   setGlobalBusy(busy);
-  for (const id of Object.values(ACTION_BTN_MAP)) {
+  for (const id of ACTION_BTN_IDS) {
     const el = $(id);
-    if (!el) continue;
-    el.disabled = busy;
-    el.classList.toggle("is-loading", busy && ACTION_BTN_MAP[activeAction] === id);
+    if (el) el.disabled = busy;
   }
 }
 
 async function runAction(action, extraOpts = {}) {
   if (stateUI.actionRunning) {
-    appendConsole("\n[提示] 上一个操作仍在执行中，请稍候…\n");
+    showSnackbar("上一项操作仍在执行中，请稍候");
     return;
   }
-  setActionBusy(true, action);
+  setActionBusy(true);
+  $("console-card").classList.remove("hidden");
   const statusEl = $("console-status-text");
   statusEl.textContent = `正在执行 ${action}…`;
   statusEl.className = "drawer-status running";
-  $("console-drawer").open = true;
   try {
     const opts = {
       stataPath: $("in-stata-path").value.trim(),
@@ -392,6 +270,7 @@ async function runAction(action, extraOpts = {}) {
     if (res.code === 0) {
       statusEl.textContent = `${action} 完成`;
       statusEl.className = "drawer-status ok";
+      showSnackbar(`${action} 完成`);
       if (action === "install" || action === "refresh") {
         stateUI.userEditedPort = false;
         stateUI.userEditedTimeout = false;
@@ -401,6 +280,7 @@ async function runAction(action, extraOpts = {}) {
       statusEl.className = "drawer-status bad";
     }
     await refreshOverview();
+    await refreshConfigSnippet();
   } catch (err) {
     appendConsole(`\n[异常] ${err?.message || err}\n`);
     statusEl.textContent = `${action} 异常`;
@@ -410,7 +290,6 @@ async function runAction(action, extraOpts = {}) {
   }
 }
 
-/* ── 2. Config & 17 Tools ───────────────────────────────────────────── */
 async function refreshConfigSnippet() {
   const res = await api.getConfigSnippet({
     transport: stateUI.transport,
@@ -418,361 +297,331 @@ async function refreshConfigSnippet() {
     key: $("cfg-key").value.trim() || "stata-mcp",
     timeoutMs: Number($("cfg-timeout-ms").value || 0) || undefined,
   });
-  $("cfg-snippet-box").textContent = res.snippet || res.stderr || "{}";
+  stateUI.configSnippetText = res.snippet || res.stderr || "{}";
+  $("cfg-snippet-box").textContent = stateUI.configSnippetText;
+  return stateUI.configSnippetText;
 }
 
-function renderToolsCatalog() {
-  const cats = ["全部", ...new Set(MCP_TOOLS_CATALOG.map((t) => t.cat))];
-  $("tools-cat-pills").innerHTML = cats
-    .map(
-      (c) =>
-        `<button type="button" class="pill-btn ${stateUI.toolsCategory === c ? "active" : ""}" data-cat="${escapeHtml(c)}">${escapeHtml(c)}</button>`,
-    )
-    .join("");
-  $("tools-cat-pills").querySelectorAll(".pill-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      stateUI.toolsCategory = btn.dataset.cat;
-      renderToolsCatalog();
-    });
-  });
-
-  const q = ($("tools-filter-input").value || "").trim().toLowerCase();
-  const filtered = MCP_TOOLS_CATALOG.filter((t) => {
-    if (stateUI.toolsCategory !== "全部" && t.cat !== stateUI.toolsCategory) return false;
-    if (!q) return true;
-    return t.name.toLowerCase().includes(q) || t.desc.toLowerCase().includes(q) || t.cat.toLowerCase().includes(q);
-  });
-
-  $("tools-catalog").innerHTML = filtered
-    .map(
-      (t) => `<div class="tool-item">
-        <div class="tool-head">
-          <span class="tool-name">${escapeHtml(t.name)}</span>
-          <span class="tool-cat">${escapeHtml(t.cat)}</span>
-        </div>
-        <div class="tool-desc">${escapeHtml(t.desc)}</div>
-      </div>`,
-    )
-    .join("") || `<div class="hint-text">没有匹配的 MCP 工具</div>`;
+/* ── Page 2: Research Terminal ──────────────────────────────────────── */
+function loadSavedProjects() {
+  try {
+    stateUI.pinnedProjects = JSON.parse(localStorage.getItem("stata-mcp-pinned-projects") || "[]");
+  } catch {
+    stateUI.pinnedProjects = [];
+  }
+  try {
+    stateUI.recentProjects = JSON.parse(localStorage.getItem("stata-mcp-recent-projects") || "[]");
+  } catch {
+    stateUI.recentProjects = [];
+  }
 }
 
-/* ── 3. Jobs & Error Localization ───────────────────────────────────── */
-async function refreshJobs() {
-  stateUI.jobsCache = await api.listJobs(40);
-  renderJobsList();
+function saveProjectsState() {
+  localStorage.setItem("stata-mcp-pinned-projects", JSON.stringify(stateUI.pinnedProjects));
+  localStorage.setItem("stata-mcp-recent-projects", JSON.stringify(stateUI.recentProjects));
 }
 
-function renderJobsList() {
-  const listEl = $("jobs-list");
-  const rows =
-    stateUI.jobsFilter === "failed"
-      ? stateUI.jobsCache.filter((j) => j.status === "failed")
-      : stateUI.jobsCache;
+function recordRecentProject(dirPath) {
+  const clean = String(dirPath || "").trim();
+  if (!clean) return;
+  localStorage.setItem("stata-mcp-last-project", clean);
+  stateUI.recentProjects = [clean, ...stateUI.recentProjects.filter((p) => p !== clean)].slice(0, 6);
+  saveProjectsState();
+}
 
-  if (!rows.length) {
-    listEl.innerHTML = `<div class="hint-text">${stateUI.jobsFilter === "failed" ? "暂无失败作业" : "暂无作业记录"}</div>`;
+function renderProjectPills() {
+  const active = $("term-folder-input").value.trim();
+  const pinnedSet = new Set(stateUI.pinnedProjects);
+  const all = [...stateUI.pinnedProjects];
+  for (const r of stateUI.recentProjects) {
+    if (!pinnedSet.has(r)) all.push(r);
+  }
+  $("btn-toggle-pin-project").textContent = pinnedSet.has(active) ? "取消收藏" : "收藏";
+
+  const box = $("term-projects-list");
+  if (!all.length) {
+    box.innerHTML = `<span class="setup-meta">尚无常用科研目录，点击右侧「选择文件夹…」添加</span>`;
     return;
   }
-
-  listEl.innerHTML = rows
-    .map((j) => {
-      const fullPath = j.source_file || j.file_path || "";
-      const baseName = fullPath.split(/[\\/]/).pop() || j.kind || "selection";
-      const errBadge = j.error_line ? ` · L${j.error_line}` : "";
-      return `<div class="job-row ${j.job_id === stateUI.selectedJobId ? "active" : ""}" data-job="${escapeHtml(j.job_id)}">
-        <div class="job-row-top">
-          <span>${escapeHtml(j.job_id)}</span>
-          <span class="badge ${escapeHtml(j.status)}">${escapeHtml(j.status)}${escapeHtml(errBadge)}</span>
-        </div>
-        <div class="job-file" title="${escapeHtml(fullPath)}">${escapeHtml(baseName)}</div>
-        <div class="job-meta">步数 ${j.step ?? 0} · ${escapeHtml(j.started_at_text || "")}</div>
-      </div>`;
+  box.innerHTML = all
+    .map((dir) => {
+      const name = dir.split(/[/\\]/).filter(Boolean).pop() || dir;
+      const isPinned = pinnedSet.has(dir);
+      const isActive = dir === active;
+      return `<button type="button" class="project-pill ${isActive ? "active" : ""}" data-project-dir="${escapeHtml(dir)}" title="${escapeHtml(dir)}">
+        <span>${isPinned ? "★ " : ""}${escapeHtml(name)}</span>
+      </button>`;
     })
     .join("");
 
-  listEl.querySelectorAll(".job-row").forEach((el) => {
-    el.addEventListener("click", () => loadJobDetail(el.dataset.job));
+  box.querySelectorAll(".project-pill").forEach((btn) => {
+    btn.addEventListener("click", () => selectResearchFolder(btn.dataset.projectDir));
   });
-
-  if ((!stateUI.selectedJobId || !rows.some((r) => r.job_id === stateUI.selectedJobId)) && rows[0]) {
-    loadJobDetail(rows[0].job_id);
-  }
 }
 
-async function loadJobDetail(jobId) {
-  stateUI.selectedJobId = jobId;
-  document.querySelectorAll(".job-row").forEach((el) => {
-    el.classList.toggle("active", el.dataset.job === jobId);
-  });
-  const res = await api.getJobDetail(jobId);
-  if (!res.ok) return;
-  const { meta, journal, diagnosis } = res;
-  $("job-detail-title").textContent = `${meta.job_id} (${meta.status})`;
-  $("job-detail-sub").textContent = `${meta.source_file || meta.file_path || ""} · 共 ${meta.step ?? 0} 步`;
-  $("btn-cancel-job").disabled = meta.status !== "running";
-  $("job-journal-box").textContent = journal || "(空日志)";
-
-  const diagBox = $("job-diagnosis-box");
-  if (diagnosis) {
-    diagBox.classList.remove("hidden");
-    const helpBtn = diagnosis.suggested_help_topic
-      ? `<button type="button" class="btn btn-secondary btn-sm" data-jump-help="${escapeHtml(diagnosis.suggested_help_topic)}">查看 stata_help("${escapeHtml(diagnosis.suggested_help_topic)}")</button>`
-      : "";
-    diagBox.innerHTML = `
-      <div class="card-header-row">
-        <strong>报错位置：${escapeHtml(diagnosis.file_path || "<selection>")}:${escapeHtml(diagnosis.line ?? "?")}（${escapeHtml(diagnosis.error_code)} ${escapeHtml(diagnosis.error_title || "")}）</strong>
-        ${helpBtn}
-      </div>
-      <div><strong>错误信息：</strong>${escapeHtml(diagnosis.error_message)}</div>
-      <div><strong>修复建议：</strong>${escapeHtml(diagnosis.fix_hint)}</div>
-      ${diagnosis.source_context ? `<pre>${escapeHtml(diagnosis.source_context)}</pre>` : ""}
-    `;
-    diagBox.querySelectorAll("[data-jump-help]").forEach((b) => {
-      b.addEventListener("click", () => openHelpForTopic(b.dataset.jumpHelp));
-    });
-  } else {
-    diagBox.classList.add("hidden");
-    diagBox.innerHTML = "";
-  }
-}
-
-/* ── 4. Help Reader ─────────────────────────────────────────────────── */
-async function lookupHelp() {
-  const topic = $("help-topic-input").value.trim();
-  if (!topic) return;
-  $("help-search-results").classList.add("hidden");
-  $("help-search-results").innerHTML = "";
-  $("help-output-box").classList.remove("hidden");
-  $("help-output-box").textContent = "查询中…";
-  const res = await api.lookupHelp({ topic, section: stateUI.helpSection });
-  const seeWrap = $("help-also-see");
-
-  if (res.found) {
-    $("help-meta-bar").textContent = `解析命令: ${res.resolved_topic} (${res.source}) · 章节: ${(res.sections_available || []).join(", ") || "默认"}`;
-    $("help-output-box").textContent = res.content;
-    const seeList = res.also_see || [];
-    if (seeList.length) {
-      seeWrap.classList.remove("hidden");
-      seeWrap.innerHTML =
-        `<span class="chips-label">相关：</span>` +
-        seeList
-          .slice(0, 8)
-          .map((item) => {
-            const cmd = item.replace(/^\[[^\]]+\]\s*/, "").trim().split(/\s+/)[0];
-            return `<button type="button" class="chip-btn" data-topic="${escapeHtml(cmd)}">${escapeHtml(item)}</button>`;
-          })
-          .join("");
-      seeWrap.querySelectorAll("[data-topic]").forEach((b) => {
-        b.addEventListener("click", () => openHelpForTopic(b.dataset.topic));
-      });
-    } else {
-      seeWrap.classList.add("hidden");
-      seeWrap.innerHTML = "";
-    }
-  } else {
-    seeWrap.classList.add("hidden");
-    $("help-meta-bar").textContent = `未直接找到 "${topic}"，可点击“模糊搜索”`;
-    $("help-output-box").textContent = res.error || "未找到对应 .sthlp 文档。";
-  }
-}
-
-async function searchHelp() {
-  const query = $("help-topic-input").value.trim();
-  if (!query) return;
-  $("help-also-see").classList.add("hidden");
-  const res = await api.searchHelp({ query, limit: 30 });
-  const items = res.results || [];
-  $("help-meta-bar").textContent = `关键词 "${query}" 命中 ${res.count} 条（点击条目可直接阅读文档）`;
-  const resultsEl = $("help-search-results");
-  if (!items.length) {
-    resultsEl.classList.add("hidden");
-    resultsEl.innerHTML = "";
-    $("help-output-box").classList.remove("hidden");
-    $("help-output-box").textContent = "无匹配项";
+async function selectResearchFolder(folderPath) {
+  const clean = String(folderPath || "").trim();
+  $("term-folder-input").value = clean;
+  if (!clean) {
+    stateUI.currentProjectInfo = null;
+    $("term-folder-meta").innerHTML = "";
+    renderProjectPills();
     return;
   }
-  resultsEl.innerHTML = items
-    .map(
-      (r) => `<button type="button" class="search-result-row" data-topic="${escapeHtml(r.target || r.topic)}">
-        <div class="search-result-top">
-          <span>${escapeHtml(r.topic)}${r.target && r.target !== r.topic ? ` → ${escapeHtml(r.target)}` : ""}</span>
-          <span class="tool-cat">${escapeHtml(r.source)}</span>
-        </div>
-        <div class="search-result-title">${escapeHtml(r.title || "(点击查看 .sthlp 详情)")}</div>
-      </button>`,
-    )
-    .join("");
-  resultsEl.querySelectorAll("[data-topic]").forEach((b) => {
-    b.addEventListener("click", () => openHelpForTopic(b.dataset.topic));
-  });
-  resultsEl.classList.remove("hidden");
-  $("help-output-box").classList.add("hidden");
-  $("help-output-box").textContent = items
-    .map((r) => `${r.topic.padEnd(24)} -> ${r.target.padEnd(24)} [${r.source}] ${r.title || ""}`)
-    .join("\n");
+  const info = await api.inspectProject(clean);
+  stateUI.currentProjectInfo = info;
+  if (!info.ok) {
+    $("term-folder-meta").innerHTML = `<span class="info-chip">${escapeHtml(info.error || "无效目录")}</span>`;
+    renderProjectPills();
+    return;
+  }
+  recordRecentProject(info.path);
+  $("term-folder-input").value = info.path;
+  $("term-folder-meta").innerHTML = [
+    `<span class="info-chip">${info.doCount} 个 .do</span>`,
+    `<span class="info-chip">${info.dtaCount} 个 .dta</span>`,
+    info.hasStataMcpEntry
+      ? `<span class="info-chip ok">.mcp.json 已就绪</span>`
+      : info.hasMcpJson
+        ? `<span class="info-chip">.mcp.json 未含 stata-mcp</span>`
+        : `<span class="info-chip">无项目 .mcp.json</span>`,
+  ].join("");
+  renderProjectPills();
 }
 
-/* ── 5. Anti-Loop Lint & Vectorize Guide ────────────────────────────── */
-async function runLint() {
-  const filePath = $("lint-file-input").value.trim();
-  const code = $("lint-code-input").value;
-  const strict = $("chk-lint-strict").checked;
+function renderAgentsGrid() {
+  const grid = $("term-agents-grid");
+  if (!stateUI.agents.length) {
+    grid.innerHTML = `<div class="setup-meta">正在探测本机 Agent 与终端…</div>`;
+    return;
+  }
+  grid.innerHTML = stateUI.agents
+    .map((a) => {
+      const cls = a.installed ? "installed" : "missing";
+      const badgeText = a.installed ? (a.kind === "app" ? "应用已就绪" : "CLI 已就绪") : "未检测到";
+      return `<button type="button" class="agent-card ${cls}" data-agent-id="${escapeHtml(a.id)}" ${a.installed ? "" : "disabled"}>
+        <div class="agent-head">
+          <span class="agent-name">${escapeHtml(a.name)}</span>
+          <span class="agent-badge">${badgeText}</span>
+        </div>
+        <div class="agent-desc">${escapeHtml(a.desc)}</div>
+      </button>`;
+    })
+    .join("");
+
+  grid.querySelectorAll(".agent-card[data-agent-id]").forEach((btn) => {
+    btn.addEventListener("click", () => launchSelectedAgent(btn.dataset.agentId));
+  });
+}
+
+async function launchSelectedAgent(agentId, customCommand = "") {
+  const folderPath = $("term-folder-input").value.trim();
+  if (!folderPath) {
+    showSnackbar("请先选择科研项目文件夹");
+    return;
+  }
   setGlobalBusy(true);
   try {
-    const res = await api.lintDo({ filePath, code, strict });
-    const issues = res.issues || [];
-    const score = res.idiomatic_score ?? 100;
-
-    const banner = $("lint-score-banner");
-    banner.classList.remove("hidden");
-    const fillColor = score >= 80 ? "var(--ok)" : score >= 50 ? "var(--warn)" : "var(--err)";
-    banner.innerHTML = `
-      <div>
-        <strong>地道度评分：<span class="score-num">0</span> / 100</strong>
-        <div class="card-sub">${escapeHtml(res.summary || "")}</div>
-      </div>
-      <div class="score-meter"><div class="score-fill" style="width:0%;background:${fillColor}"></div></div>
-    `;
-    requestAnimationFrame(() => {
-      const fill = banner.querySelector(".score-fill");
-      if (fill) fill.style.width = `${score}%`;
-      const numEl = banner.querySelector(".score-num");
-      if (numEl) numEl.textContent = String(score);
+    const ensureService = $("chk-ensure-service").checked;
+    const res = await api.launchAgent({
+      folderPath,
+      agentId,
+      customCommand,
+      ensureService,
     });
-
-    const box = $("lint-result-box");
-    if (!issues.length) {
-      box.innerHTML = `<div class="issue-card info"><strong>未发现反循环或常见语法陷阱！</strong></div>`;
+    if (!res.ok) {
+      showSnackbar(res.error || "启动失败", 3500);
+      if (res.needsInstall) switchTab("config");
       return;
     }
-
-    box.innerHTML = issues
-      .map((iss, idx) => {
-        const helpBtn = iss.help_topic
-          ? `<button type="button" class="btn btn-ghost btn-sm" data-jump-help="${escapeHtml(iss.help_topic)}">查看 help ${escapeHtml(iss.help_topic)}</button>`
-          : "";
-        const copyBtn = iss.example_after
-          ? `<button type="button" class="btn btn-ghost btn-sm" data-copy-idx="${idx}">复制改写</button>`
-          : "";
-        return `<div class="issue-card ${escapeHtml(iss.severity)}">
-          <div class="card-header-row">
-            <strong>L${escapeHtml(iss.line)} [${escapeHtml(iss.severity)}] ${escapeHtml(iss.rule_id)}</strong>
-            <div class="header-actions">${helpBtn}${copyBtn}</div>
-          </div>
-          <div>${escapeHtml(iss.message)}</div>
-          <div class="hint-text">建议：${escapeHtml(iss.suggestion)}</div>
-          ${iss.example_after ? `<pre>${escapeHtml(iss.example_after)}</pre>` : ""}
-        </div>`;
-      })
-      .join("");
-
-    box.querySelectorAll("[data-jump-help]").forEach((b) => {
-      b.addEventListener("click", () => openHelpForTopic(b.dataset.jumpHelp));
-    });
-    box.querySelectorAll("[data-copy-idx]").forEach((b) => {
-      b.addEventListener("click", () => {
-        const item = issues[Number(b.dataset.copyIdx)];
-        if (item?.example_after) copyWithFeedback(item.example_after, b);
-      });
-    });
+    if (res.serviceStarted) {
+      refreshOverview();
+      showSnackbar(`已自动启动 Stata MCP 并打开 ${res.launched}`, 3000);
+    } else {
+      showSnackbar(`已在项目目录启动：${res.launched}`, 2500);
+    }
   } finally {
     setGlobalBusy(false);
   }
 }
 
-async function loadAllRecipes() {
-  const res = await api.vectorizeGuide({ pattern: "all" });
-  stateUI.allRecipes = res.recipes || [];
-  renderRecipes();
+async function refreshTerminalPage() {
+  loadSavedProjects();
+  if (!$("term-folder-input").value.trim()) {
+    const savedLast = localStorage.getItem("stata-mcp-last-project") || "";
+    if (savedLast) $("term-folder-input").value = savedLast;
+  }
+  const [agents] = await Promise.all([
+    api.detectAgents(),
+    selectResearchFolder($("term-folder-input").value.trim()),
+  ]);
+  stateUI.agents = agents || [];
+  renderAgentsGrid();
 }
 
-function renderRecipes() {
-  const q = ($("recipe-filter-input").value || "").trim().toLowerCase();
-  const items = stateUI.allRecipes.filter((r) => {
-    if (!q) return true;
-    return (
-      r.title.toLowerCase().includes(q) ||
-      r.why_better.toLowerCase().includes(q) ||
-      (r.keywords || []).some((k) => k.toLowerCase().includes(q))
-    );
+/* ── Page 3: Empirical Monitor (Single-Column Expandable Timeline) ──── */
+function statusBadgeClass(status) {
+  if (status === "finished") return "ok";
+  if (status === "running") return "warn";
+  if (status === "failed" || status === "timed_out") return "bad";
+  return "";
+}
+
+function formatDuration(sec) {
+  if (sec === undefined || sec === null) return "—";
+  const n = Number(sec);
+  if (Number.isNaN(n)) return "—";
+  return n >= 60 ? `${(n / 60).toFixed(1)}m` : `${n.toFixed(1)}s`;
+}
+
+async function loadJobDetailForCard(jobId) {
+  const detail = await api.getJobDetail(jobId);
+  if (detail.ok) {
+    stateUI.jobDetailsCache.set(jobId, detail);
+  }
+  return detail;
+}
+
+function renderTimelineDetailHtml(detail) {
+  if (!detail || !detail.ok) {
+    return `<div class="setup-meta">正在读取日志…</div>`;
+  }
+  const d = detail.diagnosis;
+  let diagHtml = "";
+  if (d) {
+    const loc = `${d.file || "?"}:${d.error_line || "?"}`;
+    const snippet = (d.context_snippet || [])
+      .map((s) => `${s.is_error ? ">>>" : "   "} ${String(s.line).padStart(4, " ")} | ${s.code}`)
+      .join("\n");
+    diagHtml = `<div class="diag-box">
+      <div class="diag-title">报错定位：${escapeHtml(loc)} · ${escapeHtml(d.error_code || "")}</div>
+      <div>${escapeHtml(d.error_message || "")}</div>
+      ${d.fix_hint ? `<div style="margin-top:4px;">建议：${escapeHtml(d.fix_hint)}</div>` : ""}
+      ${snippet ? `<pre class="diag-code">${escapeHtml(snippet)}</pre>` : ""}
+    </div>`;
+  }
+  return `${diagHtml}<pre class="console-box">${escapeHtml(detail.journal || "(暂无步骤日志)")}</pre>`;
+}
+
+function renderMonitorTimeline() {
+  const box = $("monitor-timeline");
+  const filtered = stateUI.jobsCache.filter((j) => {
+    if (stateUI.jobsFilter === "all") return true;
+    return j.status === stateUI.jobsFilter;
+  });
+  if (!filtered.length) {
+    box.innerHTML = `<div class="empty-card">当前筛选条件下暂无 Stata 作业记录</div>`;
+    return;
+  }
+
+  box.innerHTML = filtered
+    .map((j) => {
+      const expanded = stateUI.expandedJobs.has(j.job_id);
+      const cls = statusBadgeClass(j.status);
+      const target = j.file_path || j.do_file || j.kind || j.job_id;
+      const errTag = j.error_code ? ` · ${j.error_code}${j.error_line ? ` (Line ${j.error_line})` : ""}` : "";
+      const cancelBtn =
+        j.status === "running"
+          ? `<button type="button" class="btn btn-danger btn-xs" data-cancel-job="${escapeHtml(j.job_id)}">中止</button>`
+          : "";
+      const detail = expanded ? stateUI.jobDetailsCache.get(j.job_id) : null;
+      return `<article class="timeline-card" data-job-card="${escapeHtml(j.job_id)}">
+        <div class="timeline-summary" data-toggle-job="${escapeHtml(j.job_id)}" role="button" tabindex="0">
+          <div class="timeline-left">
+            <div class="timeline-title">${escapeHtml(target)}</div>
+            <div class="timeline-sub">${escapeHtml(j.job_id)} · ${j.steps ?? 0} 步 · ${formatDuration(j.elapsed_s)}${escapeHtml(errTag)}</div>
+          </div>
+          <div class="timeline-right">
+            ${cancelBtn}
+            <span class="pill-badge ${cls}">${escapeHtml(j.status || "unknown")}</span>
+          </div>
+        </div>
+        ${expanded ? `<div class="timeline-detail">${renderTimelineDetailHtml(detail)}</div>` : ""}
+      </article>`;
+    })
+    .join("");
+
+  box.querySelectorAll("[data-cancel-job]").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const jobId = btn.dataset.cancelJob;
+      await api.cancelJob(jobId);
+      showSnackbar(`已向作业 ${jobId} 发送中止请求`);
+      await refreshJobs();
+    });
   });
 
-  $("recipes-grid").innerHTML = items
-    .map(
-      (r, idx) => `<div class="recipe-card">
-        <div class="card-header-row">
-          <strong>${escapeHtml(r.title)}</strong>
-          <button type="button" class="btn btn-ghost btn-sm" data-copy-recipe="${idx}">复制地道写法</button>
-        </div>
-        <div class="card-sub">${escapeHtml(r.why_better)}</div>
-        ${r.verified_note ? `<div class="verified-pill">✓ ${escapeHtml(r.verified_note)}</div>` : ""}
-        <div class="compare-grid">
-          <div class="compare-col">
-            <div class="compare-col-label">避免：低效循环写法</div>
-            <pre>${escapeHtml(r.bad_loop)}</pre>
-          </div>
-          <div class="compare-col">
-            <div class="compare-col-label">推荐：向量化地道 Stata</div>
-            <pre>${escapeHtml(r.idiomatic_stata)}</pre>
-          </div>
-        </div>
-      </div>`,
-    )
-    .join("") || `<div class="hint-text">无匹配的向量化方案</div>`;
-
-  $("recipes-grid").querySelectorAll("[data-copy-recipe]").forEach((b) => {
-    b.addEventListener("click", () => {
-      const rec = items[Number(b.dataset.copyRecipe)];
-      if (rec) copyWithFeedback(rec.idiomatic_stata, b);
+  box.querySelectorAll("[data-toggle-job]").forEach((row) => {
+    const toggle = async () => {
+      const jobId = row.dataset.toggleJob;
+      if (stateUI.expandedJobs.has(jobId)) {
+        stateUI.expandedJobs.delete(jobId);
+        renderMonitorTimeline();
+      } else {
+        stateUI.expandedJobs.add(jobId);
+        renderMonitorTimeline();
+        await loadJobDetailForCard(jobId);
+        renderMonitorTimeline();
+      }
+    };
+    row.addEventListener("click", toggle);
+    row.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        toggle();
+      }
     });
   });
 }
 
-/* ── 6. Logs & Doctor ───────────────────────────────────────────────── */
-async function refreshLogs() {
-  const res = await api.readLogTail(stateUI.logName, 160);
-  $("log-tail-box").textContent = res.content || "(空)";
+function scheduleMonitorPollIfNeeded() {
+  if (stateUI.pollTimer) {
+    clearTimeout(stateUI.pollTimer);
+    stateUI.pollTimer = null;
+  }
+  const hasRunning = stateUI.jobsCache.some((j) => j.status === "running");
+  if (stateUI.activeTab === "monitor" && hasRunning) {
+    stateUI.pollTimer = setTimeout(() => refreshJobs(), 2000);
+  }
 }
 
-/* ── Wire All Events ────────────────────────────────────────────────── */
+async function refreshJobs() {
+  stateUI.jobsCache = (await api.listJobs(40)) || [];
+  for (const jobId of stateUI.expandedJobs) {
+    const item = stateUI.jobsCache.find((j) => j.job_id === jobId);
+    if (!stateUI.jobDetailsCache.has(jobId) || item?.status === "running") {
+      await loadJobDetailForCard(jobId);
+    }
+  }
+  renderMonitorTimeline();
+  scheduleMonitorPollIfNeeded();
+}
+
+/* ── Logs Modal ─────────────────────────────────────────────────────── */
+async function refreshLogs() {
+  const res = await api.readLogTail(stateUI.logName, 140);
+  $("log-tail-box").textContent = res.content || "(无内容)";
+}
+
+/* ── Events Wiring ──────────────────────────────────────────────────── */
 function wireEvents() {
+  // Navigation
   document.querySelectorAll(".nav-btn").forEach((btn) => {
     btn.addEventListener("click", () => switchTab(btn.dataset.tab));
   });
-  document.querySelectorAll("#workflow-stepper [data-goto-tab]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      if (btn.dataset.filterCat) {
-        stateUI.toolsCategory = btn.dataset.filterCat;
-        renderToolsCatalog();
-      }
-      if (btn.dataset.jobsFilter) {
-        stateUI.jobsFilter = btn.dataset.jobsFilter;
-        document.querySelectorAll("#jobs-filter-seg .seg-btn").forEach((x) =>
-          x.classList.toggle("active", x.dataset.jobFilter === stateUI.jobsFilter),
-        );
-      }
-      switchTab(btn.dataset.gotoTab);
-    });
-  });
-  api.onLog(({ text }) => appendConsole(text));
-  api.onStateChanged?.(() => refreshOverview());
 
-  $("btn-open-home").addEventListener("click", () => api.openStateFolder());
+  // Page 1: Config
   $("btn-refresh-overview").addEventListener("click", refreshOverview);
+  $("btn-open-advanced").addEventListener("click", openAdvancedDrawer);
+  $("btn-open-mirrors-quick").addEventListener("click", openAdvancedDrawer);
+  $("btn-open-client-cfg").addEventListener("click", openAdvancedDrawer);
+  $("btn-close-advanced").addEventListener("click", closeAdvancedDrawer);
+  $("drawer-backdrop").addEventListener("click", closeAdvancedDrawer);
+
+  $("btn-install").addEventListener("click", () => runAction("install"));
   $("btn-start").addEventListener("click", () => runAction("start"));
   $("btn-stop").addEventListener("click", () => runAction("stop"));
-  $("btn-install").addEventListener("click", () => runAction("install"));
-  $("btn-refresh-bin").addEventListener("click", () => runAction("refresh"));
   $("btn-verify").addEventListener("click", () => runAction("verify"));
-  $("btn-clear-console").addEventListener("click", () => {
-    $("action-console").textContent = "";
-    const statusEl = $("console-status-text");
-    statusEl.textContent = "已清空";
-    statusEl.className = "drawer-status";
-  });
-  $("btn-copy-console").addEventListener("click", () =>
-    copyWithFeedback($("action-console").textContent, $("btn-copy-console")),
-  );
 
   $("in-stata-select").addEventListener("change", (e) => {
     if (e.target.value) {
@@ -787,27 +636,49 @@ function wireEvents() {
       refreshOverview();
     }
   });
-  $("in-port").addEventListener("input", () => {
-    stateUI.userEditedPort = true;
-  });
-  $("in-timeout").addEventListener("input", () => {
-    stateUI.userEditedTimeout = true;
-  });
+
   $("btn-use-alt-port").addEventListener("click", () => {
     stateUI.userEditedPort = true;
     $("in-port").value = "4011";
-    $("ov-advanced-panel").open = true;
     $("port-conflict-banner").classList.add("hidden");
+    openAdvancedDrawer();
+    showSnackbar("已切换端口为 4011");
   });
 
-  // Environment mirror links & PyPI presets
+  document.querySelectorAll("#cfg-transport-seg .seg-btn").forEach((b) => {
+    b.addEventListener("click", () => {
+      stateUI.transport = b.dataset.transport;
+      document.querySelectorAll("#cfg-transport-seg .seg-btn").forEach((x) => x.classList.toggle("active", x === b));
+      refreshConfigSnippet();
+    });
+  });
+
+  $("btn-copy-config").addEventListener("click", async () => {
+    const txt = await refreshConfigSnippet();
+    copyWithFeedback(txt, $("btn-copy-config"));
+  });
+
+  // Console Drawer
+  $("btn-copy-console").addEventListener("click", () =>
+    copyWithFeedback($("action-console").textContent, $("btn-copy-console")),
+  );
+  $("btn-clear-console").addEventListener("click", () => {
+    $("action-console").textContent = "等待操作…";
+    $("console-status-text").textContent = "就绪";
+    $("console-status-text").className = "drawer-status";
+  });
+  $("btn-close-console").addEventListener("click", () => {
+    $("console-card").classList.add("hidden");
+  });
+
+  // Advanced Drawer: Mirrors, Ports, Safe Writer, Maintenance
   document.querySelectorAll("#env-mirror-links [data-open-url]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       try {
         await api.openExternalUrl(btn.dataset.openUrl);
         showSnackbar(`已在浏览器打开：${btn.textContent.trim()}`);
       } catch (err) {
-        showSnackbar(`打开链接失败：${err?.message || err}`);
+        showSnackbar(`打开失败：${err?.message || err}`);
       }
     });
   });
@@ -816,43 +687,29 @@ function wireEvents() {
     const clean = String(url || "").trim();
     $("in-pip-index").value = clean;
     localStorage.setItem("stata-mcp-pip-index", clean);
-    let activeLabel = "";
     document.querySelectorAll("#pypi-mirror-presets [data-pip-index]").forEach((btn) => {
-      const matched = btn.dataset.pipIndex === clean;
-      btn.classList.toggle("active", matched);
-      if (matched) activeLabel = btn.dataset.mirrorLabel || btn.textContent.trim();
+      btn.classList.toggle("active", btn.dataset.pipIndex === clean);
     });
-    const installBtn = $("btn-install");
-    if (installBtn && !stateUI.actionRunning) {
-      installBtn.textContent = clean
-        ? `一键安装 / 重装（${activeLabel || "自定义源"}）`
-        : "一键安装 / 重装";
-    }
   };
-
   document.querySelectorAll("#pypi-mirror-presets [data-pip-index]").forEach((btn) => {
     btn.addEventListener("click", () => {
       syncPipIndexUI(btn.dataset.pipIndex);
       showSnackbar(`已选用 PyPI 源：${btn.textContent.trim()}`);
     });
   });
-  $("in-pip-index").addEventListener("input", () => {
-    syncPipIndexUI($("in-pip-index").value);
-  });
+  $("in-pip-index").addEventListener("input", () => syncPipIndexUI($("in-pip-index").value));
   syncPipIndexUI(localStorage.getItem("stata-mcp-pip-index") || "");
 
-  // Config tab
-  document.querySelectorAll("#cfg-transport-seg .seg-btn").forEach((b) => {
-    b.addEventListener("click", () => {
-      stateUI.transport = b.dataset.transport;
-      document.querySelectorAll("#cfg-transport-seg .seg-btn").forEach((x) => x.classList.toggle("active", x === b));
-      refreshConfigSnippet();
-    });
+  $("in-port").addEventListener("input", () => (stateUI.userEditedPort = true));
+  $("in-timeout").addEventListener("input", () => (stateUI.userEditedTimeout = true));
+  $("cfg-root").addEventListener("input", refreshConfigSnippet);
+  $("cfg-key").addEventListener("input", refreshConfigSnippet);
+  $("cfg-timeout-ms").addEventListener("input", refreshConfigSnippet);
+
+  $("btn-copy-config-drawer").addEventListener("click", async () => {
+    const txt = await refreshConfigSnippet();
+    copyWithFeedback(txt, $("btn-copy-config-drawer"));
   });
-  $("btn-gen-config").addEventListener("click", refreshConfigSnippet);
-  $("btn-copy-config").addEventListener("click", () =>
-    copyWithFeedback($("cfg-snippet-box").textContent, $("btn-copy-config")),
-  );
   $("btn-pick-config").addEventListener("click", async () => {
     const fp = await api.pickConfigFile();
     if (fp) $("cfg-target-file").value = fp;
@@ -879,88 +736,15 @@ function wireEvents() {
     });
     $("cfg-write-result").textContent = res.output || res.message || "";
   });
-  $("tools-filter-input").addEventListener("input", renderToolsCatalog);
 
-  // Jobs tab
-  $("btn-reload-jobs").addEventListener("click", refreshJobs);
-  document.querySelectorAll("#jobs-filter-seg .seg-btn").forEach((b) => {
-    b.addEventListener("click", () => {
-      stateUI.jobsFilter = b.dataset.jobFilter;
-      document.querySelectorAll("#jobs-filter-seg .seg-btn").forEach((x) => x.classList.toggle("active", x === b));
-      renderJobsList();
-    });
+  $("btn-refresh-bin").addEventListener("click", () => {
+    closeAdvancedDrawer();
+    runAction("refresh");
   });
-  $("btn-copy-journal").addEventListener("click", () =>
-    copyWithFeedback($("job-journal-box").textContent, $("btn-copy-journal")),
+  $("btn-open-home").addEventListener("click", () => api.openStateFolder());
+  $("btn-copy-doctor-json").addEventListener("click", () =>
+    copyWithFeedback($("doctor-json-box").textContent, $("btn-copy-doctor-json")),
   );
-  $("btn-cancel-job").addEventListener("click", async () => {
-    if (!stateUI.selectedJobId) return;
-    await api.cancelJob(stateUI.selectedJobId);
-    await refreshJobs();
-    await loadJobDetail(stateUI.selectedJobId);
-  });
-
-  // Help tab
-  $("btn-lookup-help").addEventListener("click", lookupHelp);
-  $("btn-search-help").addEventListener("click", searchHelp);
-  $("help-topic-input").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") lookupHelp();
-  });
-  $("help-quick-chips").querySelectorAll("[data-topic]").forEach((b) => {
-    b.addEventListener("click", () => openHelpForTopic(b.dataset.topic));
-  });
-  $("help-section-pills").querySelectorAll("[data-section]").forEach((b) => {
-    b.addEventListener("click", () => {
-      stateUI.helpSection = b.dataset.section;
-      $("help-section-pills").querySelectorAll(".pill-btn").forEach((x) => x.classList.toggle("active", x === b));
-      lookupHelp();
-    });
-  });
-  $("btn-copy-help").addEventListener("click", () =>
-    copyWithFeedback($("help-output-box").textContent, $("btn-copy-help")),
-  );
-
-  // Lint & Recipes tab
-  document.querySelectorAll("#lint-mode-seg .seg-btn").forEach((b) => {
-    b.addEventListener("click", () => {
-      const mode = b.dataset.lintMode;
-      document.querySelectorAll("#lint-mode-seg .seg-btn").forEach((x) => x.classList.toggle("active", x === b));
-      $("lint-view-check").classList.toggle("hidden", mode !== "check");
-      $("lint-view-recipes").classList.toggle("hidden", mode !== "recipes");
-      if (mode === "recipes" && !stateUI.allRecipes.length) loadAllRecipes();
-    });
-  });
-  $("btn-pick-do").addEventListener("click", async () => {
-    const fp = await api.pickDoFile();
-    if (fp) $("lint-file-input").value = fp;
-  });
-  $("btn-clear-do").addEventListener("click", () => ($("lint-file-input").value = ""));
-  $("btn-load-sample").addEventListener("click", () => {
-    $("lint-file-input").value = "";
-    $("lint-code-input").value = SAMPLE_LINT_CODE;
-  });
-  $("btn-run-lint").addEventListener("click", runLint);
-  $("recipe-filter-input").addEventListener("input", renderRecipes);
-
-  // Doctor & Logs tab
-  $("btn-reload-logs").addEventListener("click", () => {
-    refreshOverview();
-    refreshLogs();
-  });
-  document.querySelectorAll("#log-tabs-seg .seg-btn").forEach((b) => {
-    b.addEventListener("click", () => {
-      stateUI.logName = b.dataset.log;
-      document.querySelectorAll("#log-tabs-seg .seg-btn").forEach((x) => x.classList.toggle("active", x === b));
-      refreshLogs();
-    });
-  });
-  $("btn-copy-log-tail").addEventListener("click", () =>
-    copyWithFeedback($("log-tail-box").textContent, $("btn-copy-log-tail")),
-  );
-  $("btn-copy-doctor-json").addEventListener("click", (e) => {
-    e.preventDefault();
-    copyWithFeedback($("doctor-json-box").textContent, $("btn-copy-doctor-json"));
-  });
   $("btn-uninstall").addEventListener("click", async () => {
     const confirmed = await api.confirmAction({
       type: "warning",
@@ -971,14 +755,116 @@ function wireEvents() {
       cancelLabel: "取消",
     });
     if (!confirmed) return;
-    switchTab("overview");
+    closeAdvancedDrawer();
     await runAction("uninstall");
+  });
+
+  // Page 2: Research Terminal
+  $("btn-rescan-agents").addEventListener("click", refreshTerminalPage);
+  $("btn-pick-project").addEventListener("click", async () => {
+    const dir = await api.pickProjectDir();
+    if (dir) selectResearchFolder(dir);
+  });
+  $("term-folder-input").addEventListener("change", () => {
+    selectResearchFolder($("term-folder-input").value.trim());
+  });
+  $("btn-open-project-folder").addEventListener("click", async () => {
+    const dir = $("term-folder-input").value.trim();
+    if (!dir) {
+      showSnackbar("请先选择项目文件夹");
+      return;
+    }
+    try {
+      await api.openFolder(dir);
+    } catch (err) {
+      showSnackbar(err?.message || "无法打开目录");
+    }
+  });
+  $("btn-toggle-pin-project").addEventListener("click", () => {
+    const dir = $("term-folder-input").value.trim();
+    if (!dir) {
+      showSnackbar("请先选择项目文件夹");
+      return;
+    }
+    if (stateUI.pinnedProjects.includes(dir)) {
+      stateUI.pinnedProjects = stateUI.pinnedProjects.filter((p) => p !== dir);
+      showSnackbar("已取消收藏");
+    } else {
+      stateUI.pinnedProjects = [dir, ...stateUI.pinnedProjects.filter((p) => p !== dir)];
+      showSnackbar("已收藏到科研目录");
+    }
+    saveProjectsState();
+    renderProjectPills();
+  });
+  $("btn-write-project-mcp").addEventListener("click", async () => {
+    const dir = $("term-folder-input").value.trim();
+    if (!dir) {
+      showSnackbar("请先选择项目文件夹");
+      return;
+    }
+    const res = await api.writeProjectMcp({
+      folderPath: dir,
+      transport: stateUI.transport,
+    });
+    if (res.ok) {
+      showSnackbar("已将 stata-mcp 写入项目 .mcp.json");
+      selectResearchFolder(dir);
+    } else {
+      showSnackbar(res.output || res.message || "写入失败", 3000);
+    }
+  });
+  $("btn-copy-research-prompt").addEventListener("click", () =>
+    copyWithFeedback(RESEARCH_WORKFLOW_PROMPT, $("btn-copy-research-prompt")),
+  );
+  $("btn-launch-custom-agent").addEventListener("click", () => {
+    launchSelectedAgent("custom", $("in-custom-agent-cmd").value.trim());
+  });
+  $("in-custom-agent-cmd").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") launchSelectedAgent("custom", $("in-custom-agent-cmd").value.trim());
+  });
+
+  // Page 3: Monitor & Log Modal
+  $("btn-reload-jobs").addEventListener("click", refreshJobs);
+  document.querySelectorAll("#monitor-filter-seg .seg-btn").forEach((b) => {
+    b.addEventListener("click", () => {
+      stateUI.jobsFilter = b.dataset.jobFilter;
+      document.querySelectorAll("#monitor-filter-seg .seg-btn").forEach((x) => x.classList.toggle("active", x === b));
+      renderMonitorTimeline();
+    });
+  });
+
+  $("btn-open-log-modal").addEventListener("click", openLogModal);
+  $("btn-close-log-modal").addEventListener("click", closeLogModal);
+  $("log-modal-backdrop").addEventListener("click", closeLogModal);
+  $("btn-reload-logs").addEventListener("click", refreshLogs);
+  $("btn-copy-log-tail").addEventListener("click", () =>
+    copyWithFeedback($("log-tail-box").textContent, $("btn-copy-log-tail")),
+  );
+  document.querySelectorAll("#log-tabs-seg .seg-btn").forEach((b) => {
+    b.addEventListener("click", () => {
+      stateUI.logName = b.dataset.log;
+      document.querySelectorAll("#log-tabs-seg .seg-btn").forEach((x) => x.classList.toggle("active", x === b));
+      refreshLogs();
+    });
+  });
+
+  // Live IPC streams + Esc key
+  api.onLog(({ text }) => appendConsole(text));
+  if (api.onStateChanged) {
+    api.onStateChanged(() => refreshOverview());
+  }
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      closeAdvancedDrawer();
+      closeLogModal();
+    }
   });
 }
 
-initPlatformAndTheme();
-renderToolsCatalog();
+initThemeAndPlatform();
 wireEvents();
 const savedTab = localStorage.getItem("stata-mcp-active-tab");
-if (savedTab && savedTab !== "overview") switchTab(savedTab);
+if (savedTab && ["config", "terminal", "monitor"].includes(savedTab) && savedTab !== "config") {
+  switchTab(savedTab);
+}
 refreshOverview().finally(() => refreshConfigSnippet());

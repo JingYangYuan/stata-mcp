@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="system" data-motion="full" data-density="comfortable">
+<html lang="zh-CN" data-theme="system">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -11,12 +11,14 @@
   <div class="m3-progress" id="global-progress-bar" aria-hidden="true">
     <div class="m3-progress-bar"></div>
   </div>
+
   <div class="app-shell">
+    <!-- 瘦身左侧栏 -->
     <aside class="sidebar">
       <div class="sidebar-drag-spacer"></div>
       <div class="brand">
         <div class="brand-badge" aria-hidden="true">
-          <svg viewBox="0 0 40 40" width="36" height="36">
+          <svg viewBox="0 0 40 40" width="32" height="32">
             <rect x="1.5" y="1.5" width="37" height="37" rx="10" fill="#ffffff" stroke="#dadce0" stroke-width="1.2"/>
             <rect x="8.5" y="20" width="5.2" height="9.2" rx="1.8" fill="#FBBC04"/>
             <rect x="15.8" y="15" width="5.2" height="14.2" rx="1.8" fill="#34A853"/>
@@ -25,585 +27,334 @@
             <circle cx="30" cy="8.8" r="2.8" fill="#4285F4" stroke="#ffffff" stroke-width="1.1"/>
           </svg>
         </div>
-        <div>
-          <div class="brand-title">Stata MCP Studio</div>
-          <div class="brand-sub" id="brand-sub-version">v1.4.0 · 17 Tools</div>
+        <div class="brand-text">
+          <div class="brand-title">Stata MCP</div>
+          <div class="brand-sub" id="brand-sub-version">v1.5.0 · 单端口</div>
         </div>
       </div>
 
       <nav class="nav" aria-label="主导航">
-        <button class="nav-btn active" data-tab="overview">
-          <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 9.5L10 3l7 6.5V17a1 1 0 0 1-1 1h-4v-5H8v5H4a1 1 0 0 1-1-1V9.5z"/></svg>
-          <span>概览部署</span>
+        <button type="button" class="nav-btn active" data-tab="config">
+          <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="10" cy="10" r="3"/><path d="M10 2.5v2M10 15.5v2M3.5 10h2M14.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M15.3 4.7l-1.4 1.4M6.1 13.9l-1.4 1.4"/></svg>
+          <span>配置</span>
         </button>
-        <button class="nav-btn" data-tab="config">
-          <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M7 6L3 10l4 4M13 6l4 4-4 4M11 4l-2 12"/></svg>
-          <span>客户端接入</span>
+        <button type="button" class="nav-btn" data-tab="terminal">
+          <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="2.5" y="3.5" width="15" height="13" rx="2.5"/><path d="M6.2 8.2L9 10.5l-2.8 2.3M10.5 13h3.3"/></svg>
+          <span>科研终端</span>
         </button>
-        <button class="nav-btn" data-tab="jobs">
-          <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="14" height="12" rx="2"/><path d="M7 9h6M7 12h4"/></svg>
-          <span>作业与报错</span>
-        </button>
-        <button class="nav-btn" data-tab="help">
-          <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H16v13H6.5A2.5 2.5 0 0 0 4 18V5.5z"/><path d="M8 7h5M8 10h4"/></svg>
-          <span>Help 速查</span>
-        </button>
-        <button class="nav-btn" data-tab="lint">
-          <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M10 2.5l6 2.5v4.8c0 3.7-2.5 6.8-6 7.7-3.5-.9-6-4-6-7.7V5l6-2.5z"/><path d="M7.5 10.2l1.8 1.8 3.4-3.6"/></svg>
-          <span>反循环体检</span>
-        </button>
-        <button class="nav-btn" data-tab="doctor">
-          <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 13h3l2-6 3 8 2-4h2"/></svg>
-          <span>诊断与日志</span>
+        <button type="button" class="nav-btn" data-tab="monitor">
+          <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M3 12h3.2l2.1-5.5 3 8.2 2.1-4.2H17"/></svg>
+          <span>实证监控</span>
         </button>
       </nav>
 
       <div class="sidebar-footer">
-        <div class="status-group">
-          <div class="status-dot-row" id="sidebar-gateway-pill">
-            <span class="dot"></span>
-            <span class="dot-label">Stata MCP :4001</span>
-          </div>
-          <div class="status-dot-row" id="sidebar-engine-pill">
-            <span class="dot"></span>
-            <span class="dot-label">内置引擎 · 单端口</span>
-          </div>
+        <div class="status-dot-row" id="sidebar-service-pill">
+          <span class="dot"></span>
+          <span class="dot-label">Stata MCP :4001</span>
         </div>
 
-        <div class="page-prefs">
-          <div class="pref-row">
-            <span class="pref-label">主题</span>
-            <div class="theme-switch" role="group" aria-label="外观主题">
-              <button class="theme-btn" data-theme-choice="light">浅色</button>
-              <button class="theme-btn active" data-theme-choice="system">自动</button>
-              <button class="theme-btn" data-theme-choice="dark">深色</button>
-            </div>
-          </div>
-          <div class="pref-grid">
-            <div class="pref-mini">
-              <span class="pref-label">动效</span>
-              <div class="mini-switch" role="group" aria-label="动效偏好">
-                <button class="mini-btn active" data-motion-choice="full">标准</button>
-                <button class="mini-btn" data-motion-choice="reduced">减弱</button>
-              </div>
-            </div>
-            <div class="pref-mini">
-              <span class="pref-label">密度</span>
-              <div class="mini-switch" role="group" aria-label="界面密度">
-                <button class="mini-btn active" data-density-choice="comfortable">舒适</button>
-                <button class="mini-btn" data-density-choice="compact">紧凑</button>
-              </div>
-            </div>
-          </div>
+        <div class="theme-switch" role="group" aria-label="外观主题">
+          <button type="button" class="theme-btn" data-theme-choice="light">浅色</button>
+          <button type="button" class="theme-btn active" data-theme-choice="system">自动</button>
+          <button type="button" class="theme-btn" data-theme-choice="dark">深色</button>
         </div>
-
-        <button class="btn btn-ghost btn-sm full-width" id="btn-open-home">打开状态目录</button>
       </div>
     </aside>
 
     <main class="main-content">
       <div class="main-drag-strip"></div>
 
-      <!-- 1. 概览部署：三步向导式卡片 -->
-      <section class="tab-panel active" id="tab-overview">
+      <!-- 1. 配置：极致单屏 3 行 -->
+      <section class="tab-panel active" id="tab-config">
         <div class="workspace-container narrow">
           <header class="panel-header">
-            <div>
-              <h1>本地 Stata MCP 部署向导</h1>
-              <p>三步完成本地 Stata 探测、异步网关安装与端到端连通自检</p>
+            <div class="header-title-row">
+              <h1>配置</h1>
+              <span class="pill-badge" id="cfg-status-badge">检测中…</span>
             </div>
             <div class="header-actions">
-              <span class="pill-badge" id="ov-overall-badge">检查中…</span>
-              <button class="btn btn-ghost" id="btn-refresh-overview">刷新状态</button>
+              <button type="button" class="btn btn-ghost btn-sm" id="btn-refresh-overview">刷新</button>
+              <button type="button" class="btn btn-secondary btn-sm" id="btn-open-advanced">高级设置</button>
             </div>
           </header>
 
-          <!-- Canonical 5-Step Workflow -->
-          <article class="card workflow-card" aria-label="Stata MCP 标准调用流程">
-            <div class="workflow-accent-bar"></div>
-            <div class="card-header-row wrap">
-              <div>
-                <h2>Stata MCP 标准 5 步调用流程</h2>
-                <p class="card-sub">先查数据与命令帮助，再执行、纠错并消除低效循环（点击步骤可直达对应工作区）</p>
+          <div class="card setup-card">
+            <!-- Row 1: Stata 路径 -->
+            <div class="setup-row">
+              <div class="setup-label">
+                <div class="setup-title">Stata 路径</div>
+                <div class="setup-meta" id="cfg-env-meta">Python — · 内置引擎</div>
               </div>
-              <span class="pill-badge">Canonical Flow</span>
-            </div>
-            <div class="workflow-steps" id="workflow-stepper">
-              <button type="button" class="workflow-step" data-goto-tab="config" data-filter-cat="数据探查">
-                <span class="wf-num g-blue">1</span>
-                <span class="wf-title">读取数据</span>
-                <span class="wf-tools">describe / inspect</span>
-              </button>
-              <button type="button" class="workflow-step" data-goto-tab="help">
-                <span class="wf-num g-green">2</span>
-                <span class="wf-title">查命令与帮助</span>
-                <span class="wf-tools">which / help</span>
-              </button>
-              <button type="button" class="workflow-step" data-goto-tab="jobs">
-                <span class="wf-num g-yellow">3</span>
-                <span class="wf-title">撰写运行</span>
-                <span class="wf-tools">run_file / job_tail</span>
-              </button>
-              <button type="button" class="workflow-step" data-goto-tab="jobs" data-jobs-filter="failed">
-                <span class="wf-num g-red">4</span>
-                <span class="wf-title">报错排查重跑</span>
-                <span class="wf-tools">diagnose / run_lines</span>
-              </button>
-              <button type="button" class="workflow-step" data-goto-tab="lint">
-                <span class="wf-num g-blue">5</span>
-                <span class="wf-title">破除循环提可读</span>
-                <span class="wf-tools">lint_do / vectorize</span>
-              </button>
-            </div>
-          </article>
-
-          <!-- Step 1 -->
-          <article class="card wizard-card">
-            <div class="wizard-head">
-              <div class="wizard-title-wrap">
-                <span class="step-num">1</span>
-                <div>
-                  <h2>探测 Stata 与基础环境</h2>
-                  <p class="card-sub">自动扫描本机 Stata 安装根目录（支持 Stata 17–19 / StataNow）</p>
+              <div class="setup-control">
+                <div class="stack-sm">
+                  <div class="input-row">
+                    <select id="in-stata-select" aria-label="已发现的 Stata 安装"></select>
+                    <button type="button" class="btn btn-ghost btn-sm" id="btn-open-mirrors-quick">环境镜像</button>
+                  </div>
+                  <div class="input-row">
+                    <input type="text" id="in-stata-path" placeholder="/Applications/StataNow 或 C:\Program Files\Stata18" />
+                    <button type="button" class="btn btn-ghost btn-sm" id="btn-pick-stata">浏览…</button>
+                  </div>
                 </div>
               </div>
-              <span class="pill-badge" id="step1-badge">待检测</span>
             </div>
 
-            <div class="field-stack">
-              <label class="field-label">
-                <span>已发现的 Stata 候选</span>
-                <select id="in-stata-select"></select>
-              </label>
-
-              <label class="field-label">
-                <span>Stata 安装根目录（可手动修改或浏览选择）</span>
-                <div class="input-row">
-                  <input type="text" id="in-stata-path" placeholder="例如 /Applications/StataNow 或 C:\Program Files\Stata18" />
-                  <button class="btn btn-ghost" id="btn-pick-stata">浏览目录…</button>
-                </div>
-              </label>
-            </div>
-
-            <div class="env-chips" id="ov-env-chips">
-              <span class="env-chip" id="chip-python">Python —</span>
-              <span class="env-chip" id="chip-uv">uv —</span>
-              <span class="env-chip" id="chip-git">内置服务端 v0.5.3</span>
-              <span class="env-chip mono" id="chip-home">~/.stata-mcp</span>
-            </div>
-
-            <div class="mirror-bar" id="env-mirror-links">
-              <span class="chips-label">环境安装镜像（缺 Python / uv 时点一下直达下载安装）：</span>
-              <div class="mirror-row">
-                <button type="button" class="mirror-chip-btn" data-open-url="https://mirrors.huaweicloud.com/python/">Python 华为云镜像</button>
-                <button type="button" class="mirror-chip-btn" data-open-url="https://registry.npmmirror.com/binary.html?path=python/">Python 阿里镜像</button>
-                <button type="button" class="mirror-chip-btn" data-open-url="https://www.python.org/downloads/">Python 官方下载</button>
-                <button type="button" class="mirror-chip-btn" data-open-url="https://docs.astral.sh/uv/getting-started/installation/">uv 安装官网</button>
+            <!-- Row 2: 本地服务 -->
+            <div class="setup-row">
+              <div class="setup-label">
+                <div class="setup-title">本地服务</div>
+                <div class="setup-meta" id="cfg-service-meta">127.0.0.1:4001 · 未启动</div>
               </div>
-            </div>
-          </article>
-
-          <!-- Step 2 -->
-          <article class="card wizard-card">
-            <div class="wizard-head">
-              <div class="wizard-title-wrap">
-                <span class="step-num">2</span>
-                <div>
-                  <h2>安装或升级本地运行时</h2>
-                  <p class="card-sub">内置上游服务端源码与 17 工具网关（单端口融合、免 Git 克隆），仅部署到独立私有目录</p>
+              <div class="setup-control">
+                <div class="action-bar">
+                  <button type="button" class="btn btn-primary btn-sm" id="btn-install">一键安装</button>
+                  <button type="button" class="btn btn-secondary btn-sm" id="btn-start">启动</button>
+                  <button type="button" class="btn btn-ghost btn-sm" id="btn-stop">停止</button>
+                  <button type="button" class="btn btn-ghost btn-sm" id="btn-verify">自检</button>
+                </div>
+                <div class="port-warning-banner hidden" id="port-conflict-banner">
+                  <span id="port-conflict-text">端口 4001 已被其他进程占用</span>
+                  <button type="button" class="btn btn-secondary btn-xs" id="btn-use-alt-port">改用 4011</button>
                 </div>
               </div>
-              <span class="pill-badge" id="step2-badge">未安装</span>
             </div>
 
-            <div class="action-bar">
-              <button class="btn btn-primary" id="btn-install">一键安装 / 重装</button>
-              <button class="btn btn-secondary" id="btn-refresh-bin">原地升级脚本 (refresh)</button>
-            </div>
-
-            <div class="mirror-bar" id="pypi-mirror-presets">
-              <span class="chips-label">依赖 PyPI 加速源（点选后直接按此镜像安装）：</span>
-              <div class="mirror-row">
-                <button type="button" class="mirror-chip-btn active" data-pip-index="" data-mirror-label="默认官方源">官方默认</button>
-                <button type="button" class="mirror-chip-btn" data-pip-index="https://pypi.tuna.tsinghua.edu.cn/simple" data-mirror-label="清华源">清华 TUNA</button>
-                <button type="button" class="mirror-chip-btn" data-pip-index="https://mirrors.aliyun.com/pypi/simple/" data-mirror-label="阿里云源">阿里云</button>
-                <button type="button" class="mirror-chip-btn" data-pip-index="https://pypi.mirrors.ustc.edu.cn/simple/" data-mirror-label="中科大源">中科大</button>
-                <button type="button" class="mirror-chip-btn" data-pip-index="https://mirrors.cloud.tencent.com/pypi/simple" data-mirror-label="腾讯云源">腾讯云</button>
+            <!-- Row 3: MCP 接入 -->
+            <div class="setup-row">
+              <div class="setup-label">
+                <div class="setup-title">MCP 接入</div>
+                <div class="setup-meta">默认不触碰其他客户端配置</div>
               </div>
-            </div>
-
-            <div class="port-warning-banner hidden" id="port-conflict-banner">
-              <div>
-                <strong>检测到外部服务正占用当前端口</strong>
-                <div class="card-sub" id="port-conflict-text">127.0.0.1:4001 已有非本程序启动的服务在响应，直接启动可能会冲突。</div>
-              </div>
-              <button type="button" class="btn btn-secondary btn-sm" id="btn-use-alt-port">改用端口 4011</button>
-            </div>
-
-            <details class="advanced-panel" id="ov-advanced-panel">
-              <summary>高级选项（端口、默认超时、自定义 PyPI 镜像）</summary>
-              <div class="form-grid two-col-eq">
-                <label class="field-label">
-                  <span>服务端口（单端口融合，默认 4001）</span>
-                  <input type="number" id="in-port" value="4001" min="1024" max="65530" />
-                </label>
-                <label class="field-label">
-                  <span>默认长任务超时（秒）</span>
-                  <input type="number" id="in-timeout" value="21600" min="60" />
-                </label>
-                <label class="field-label span-two">
-                  <span>自定义 PyPI 镜像 URL（留空则使用系统默认源）</span>
-                  <input type="text" id="in-pip-index" placeholder="例如 https://pypi.tuna.tsinghua.edu.cn/simple" />
-                </label>
-              </div>
-            </details>
-          </article>
-
-          <!-- Step 3 -->
-          <article class="card wizard-card">
-            <div class="wizard-head">
-              <div class="wizard-title-wrap">
-                <span class="step-num">3</span>
-                <div>
-                  <h2>启动服务与端到端自检</h2>
-                  <p class="card-sub">单进程融合服务常驻后台（<code>127.0.0.1:4001</code>），随后运行 <code>verify</code> 验证 17 个工具</p>
-                </div>
-              </div>
-              <span class="pill-badge" id="step3-badge">未运行</span>
-            </div>
-
-            <div class="service-tiles">
-              <div class="service-tile">
-                <div class="tile-title">Stata MCP 服务（单端口入口）</div>
-                <div class="tile-status" id="ov-gateway-status">—</div>
-                <div class="tile-meta" id="ov-gateway-meta">—</div>
-              </div>
-              <div class="service-tile">
-                <div class="tile-title">内置 Stata 引擎（同进程融合）</div>
-                <div class="tile-status" id="ov-engine-status">—</div>
-                <div class="tile-meta" id="ov-engine-meta">—</div>
-              </div>
-            </div>
-
-            <div class="action-bar">
-              <button class="btn btn-primary" id="btn-start">启动服务</button>
-              <button class="btn btn-ghost" id="btn-stop">停止服务</button>
-              <button class="btn btn-secondary" id="btn-verify">端到端自检 (verify)</button>
-            </div>
-          </article>
-
-          <!-- Collapsible Terminal Drawer -->
-          <details class="card console-drawer" id="console-drawer">
-            <summary class="drawer-summary">
-              <span>操作终端输出</span>
-              <span class="drawer-status" id="console-status-text">就绪</span>
-            </summary>
-            <div class="drawer-toolbar">
-              <button class="btn btn-ghost btn-sm" id="btn-copy-console">复制输出</button>
-              <button class="btn btn-ghost btn-sm" id="btn-clear-console">清空</button>
-            </div>
-            <pre class="console-box" id="action-console">等待操作…</pre>
-          </details>
-        </div>
-      </section>
-
-      <!-- 2. 客户端接入 -->
-      <section class="tab-panel" id="tab-config">
-        <div class="workspace-container">
-          <header class="panel-header">
-            <div>
-              <h1>MCP 客户端接入与工具清单</h1>
-              <p>生成标准 JSON 配置片段粘贴到任意 MCP 客户端，默认不读取或修改其他产品的配置文件</p>
-            </div>
-          </header>
-
-          <div class="config-split">
-            <div class="card">
-              <h2>配置参数</h2>
-              <div class="field-stack">
-                <div class="field-label">
-                  <span>传输模式</span>
-                  <div class="segmented" id="cfg-transport-seg">
-                    <button type="button" class="seg-btn active" data-transport="stdio">stdio（推荐 · 代理免疫）</button>
+              <div class="setup-control">
+                <div class="inline-wrap">
+                  <div class="segmented compact" id="cfg-transport-seg">
+                    <button type="button" class="seg-btn active" data-transport="stdio">stdio（推荐）</button>
                     <button type="button" class="seg-btn" data-transport="http">Streamable HTTP</button>
                   </div>
-                </div>
-
-                <div class="form-grid two-col-eq">
-                  <label class="field-label">
-                    <span>配置根键</span>
-                    <input type="text" id="cfg-root" value="mcpServers" />
-                  </label>
-                  <label class="field-label">
-                    <span>服务器条目名</span>
-                    <input type="text" id="cfg-key" value="stata-mcp" />
-                  </label>
-                </div>
-
-                <label class="field-label">
-                  <span>客户端工具超时 ms（可选，如 120000）</span>
-                  <input type="number" id="cfg-timeout-ms" placeholder="留空则不注入 timeoutMs" />
-                </label>
-
-                <div class="action-bar">
-                  <button class="btn btn-primary" id="btn-gen-config">刷新片段</button>
+                  <button type="button" class="btn btn-primary btn-sm" id="btn-copy-config">复制配置 JSON</button>
+                  <button type="button" class="btn btn-ghost btn-sm" id="btn-open-client-cfg">查看 / 写入文件</button>
                 </div>
               </div>
-
-              <details class="advanced-panel">
-                <summary>可选：安全合并写入已有 JSON 配置文件</summary>
-                <div class="field-stack">
-                  <div class="input-row">
-                    <input type="text" id="cfg-target-file" placeholder="选择目标 JSON 配置文件路径" />
-                    <button class="btn btn-ghost" id="btn-pick-config">选择文件…</button>
-                  </div>
-                  <div class="action-bar">
-                    <button class="btn btn-ghost" id="btn-write-config-dry">预演 (Dry Run)</button>
-                    <button class="btn btn-secondary" id="btn-write-config">自动备份并合并写入</button>
-                  </div>
-                  <div class="hint-text" id="cfg-write-result"></div>
-                </div>
-              </details>
-            </div>
-
-            <div class="card json-preview-card">
-              <div class="card-header-row">
-                <h2>实时配置片段</h2>
-                <button class="btn btn-primary btn-sm" id="btn-copy-config">复制 JSON</button>
-              </div>
-              <pre class="code-box tall-code" id="cfg-snippet-box">{}</pre>
             </div>
           </div>
 
-          <div class="card">
-            <div class="card-header-row wrap">
-              <div>
-                <h2>网关提供的 17 个 MCP 工具</h2>
-                <p class="card-sub">覆盖长任务异步执行、Help 离线速查、精确报错定位、破除循环与内存数据探查</p>
+          <!-- 自动浮现的操作日志卡（执行安装/启动/自检时展开） -->
+          <section class="card console-card hidden" id="console-card">
+            <div class="card-header-row">
+              <div class="inline-wrap">
+                <span class="setup-title">操作输出</span>
+                <span class="drawer-status" id="console-status-text">就绪</span>
               </div>
-              <input type="text" class="search-inline" id="tools-filter-input" placeholder="过滤工具名或说明…" />
+              <div class="inline-wrap">
+                <button type="button" class="btn btn-ghost btn-xs" id="btn-copy-console">复制</button>
+                <button type="button" class="btn btn-ghost btn-xs" id="btn-clear-console">清空</button>
+                <button type="button" class="btn btn-ghost btn-xs" id="btn-close-console">收起</button>
+              </div>
             </div>
-            <div class="pill-bar" id="tools-cat-pills"></div>
-            <div class="tools-grid" id="tools-catalog"></div>
-          </div>
+            <pre class="console-box" id="action-console">等待操作…</pre>
+          </section>
         </div>
       </section>
 
-      <!-- 3. 作业与报错 -->
-      <section class="tab-panel" id="tab-jobs">
-        <div class="workspace-container full-height">
-          <header class="panel-header">
-            <div>
-              <h1>异步作业与精确报错定位</h1>
-              <p>每一步 Stata 命令实时落盘，失败时自动映射回原 <code>.do</code> 文件行号与上下文</p>
-            </div>
-            <div class="header-actions">
-              <button class="btn btn-ghost" id="btn-reload-jobs">刷新作业</button>
-            </div>
-          </header>
-
-          <div class="master-detail">
-            <div class="card jobs-sidebar-card">
-              <div class="card-header-row">
-                <h2>最近作业</h2>
-                <div class="segmented compact" id="jobs-filter-seg">
-                  <button type="button" class="seg-btn active" data-job-filter="all">全部</button>
-                  <button type="button" class="seg-btn" data-job-filter="failed">仅失败</button>
-                </div>
-              </div>
-              <div class="jobs-list" id="jobs-list">暂无作业记录</div>
-            </div>
-
-            <div class="card job-detail-card">
-              <div class="card-header-row">
-                <div>
-                  <h2 id="job-detail-title">选择一个作业查看详情</h2>
-                  <div class="card-sub" id="job-detail-sub">—</div>
-                </div>
-                <div class="header-actions">
-                  <button class="btn btn-ghost btn-sm" id="btn-copy-journal">复制日志</button>
-                  <button class="btn btn-danger btn-sm" id="btn-cancel-job" disabled>停止作业</button>
-                </div>
-              </div>
-
-              <div id="job-diagnosis-box" class="diagnosis-box hidden"></div>
-
-              <div class="section-subhead">执行日志 (journal.log)</div>
-              <pre class="console-box flex-grow" id="job-journal-box">从左侧选择一个作业以查看单步日志与错误定位。</pre>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- 4. Help 速查 -->
-      <section class="tab-panel" id="tab-help">
+      <!-- 2. 科研终端：选择项目文件夹 + 一键拉起 Agent -->
+      <section class="tab-panel" id="tab-terminal">
         <div class="workspace-container">
           <header class="panel-header">
             <div>
-              <h1>Stata Help 离线速查</h1>
-              <p>直接读取本机 Stata 与 SSC 的 <code>.sthlp</code> 文档，自动解析缩写别名与 SMCL 排版</p>
+              <h1>科研终端</h1>
+              <p class="header-sub">选定科研项目目录，自动确保 Stata MCP 在线并拉起 AI Agent 开展实证工作</p>
+            </div>
+            <div class="header-actions">
+              <button type="button" class="btn btn-ghost btn-sm" id="btn-rescan-agents">重新探测 Agent</button>
             </div>
           </header>
 
-          <div class="card">
+          <!-- 项目目录卡 -->
+          <section class="card section-card">
+            <div class="card-header-row">
+              <span class="section-label">科研项目文件夹</span>
+              <div class="meta-chips" id="term-folder-meta"></div>
+            </div>
+
             <div class="input-row">
-              <input type="text" id="help-topic-input" placeholder="输入命令或关键词（支持别名如 reg / sum / tab），按 Enter 查询" value="regress" />
-              <button class="btn btn-primary" id="btn-lookup-help">查询文档</button>
-              <button class="btn btn-ghost" id="btn-search-help">模糊搜索</button>
+              <input type="text" id="term-folder-input" placeholder="输入或浏览选择包含 .do / .dta 的科研项目文件夹…" />
+              <button type="button" class="btn btn-primary btn-sm" id="btn-pick-project">选择文件夹…</button>
+              <button type="button" class="btn btn-ghost btn-sm" id="btn-open-project-folder">打开目录</button>
+              <button type="button" class="btn btn-ghost btn-sm" id="btn-toggle-pin-project">收藏</button>
             </div>
 
-            <div class="quick-chips" id="help-quick-chips">
-              <span class="chips-label">常用：</span>
-              <button type="button" class="chip-btn" data-topic="regress">regress</button>
-              <button type="button" class="chip-btn" data-topic="reghdfe">reghdfe</button>
-              <button type="button" class="chip-btn" data-topic="egen">egen</button>
-              <button type="button" class="chip-btn" data-topic="xtreg">xtreg</button>
-              <button type="button" class="chip-btn" data-topic="collapse">collapse</button>
-              <button type="button" class="chip-btn" data-topic="merge">merge</button>
-              <button type="button" class="chip-btn" data-topic="frames">frames</button>
-              <button type="button" class="chip-btn" data-topic="rename_group">rename_group</button>
+            <div class="project-pills" id="term-projects-list"></div>
+
+            <div class="mcp-assist-bar">
+              <label class="checkbox-inline">
+                <input type="checkbox" id="chk-ensure-service" checked />
+                <span>启动前自动确保 Stata MCP (:4001) 在线</span>
+              </label>
+              <div class="inline-wrap">
+                <button type="button" class="btn btn-ghost btn-sm" id="btn-write-project-mcp">写入项目 .mcp.json</button>
+                <button type="button" class="btn btn-secondary btn-sm" id="btn-copy-research-prompt">复制科研 5 步规范提示词</button>
+              </div>
+            </div>
+          </section>
+
+          <!-- Agent 启动目标网格 -->
+          <section class="card section-card">
+            <div class="card-header-row">
+              <span class="section-label">选择要打开的 Agent / 终端</span>
+              <span class="setup-meta">点击卡片即可在选定目录拉起</span>
             </div>
 
-            <div class="pill-bar" id="help-section-pills">
-              <button type="button" class="pill-btn active" data-section="">全部章节</button>
-              <button type="button" class="pill-btn" data-section="syntax">Syntax</button>
-              <button type="button" class="pill-btn" data-section="options">Options</button>
-              <button type="button" class="pill-btn" data-section="description">Description</button>
-              <button type="button" class="pill-btn" data-section="examples">Examples</button>
-              <button type="button" class="pill-btn" data-section="results">Stored results</button>
-            </div>
-          </div>
+            <div class="agents-grid" id="term-agents-grid"></div>
 
-          <div class="card help-reader-card">
-            <div class="card-header-row wrap">
-              <div class="meta-bar" id="help-meta-bar">输入命令并点击“查询文档”</div>
-              <button class="btn btn-ghost btn-sm" id="btn-copy-help">复制文档</button>
+            <div class="custom-agent-row">
+              <input type="text" id="in-custom-agent-cmd" placeholder="自定义终端启动命令（例如 claude --dangerously-skip-permissions 或 codex）" />
+              <button type="button" class="btn btn-secondary btn-sm" id="btn-launch-custom-agent">在终端运行</button>
             </div>
-            <div class="quick-chips hidden" id="help-also-see"></div>
-            <div class="search-results-list hidden" id="help-search-results"></div>
-            <pre class="console-box reader-box" id="help-output-box">输入命令并点击“查询文档”</pre>
-          </div>
+          </section>
         </div>
       </section>
 
-      <!-- 5. 反循环体检 -->
-      <section class="tab-panel" id="tab-lint">
+      <!-- 3. 实证监控：极简单列可展开时间线 -->
+      <section class="tab-panel" id="tab-monitor">
         <div class="workspace-container">
           <header class="panel-header">
-            <div>
-              <h1>反循环体检与向量化改写</h1>
-              <p>拦截 <code>1/_N</code>、<code>levelsof + foreach</code>、<code>preserve</code> 循环等低效模式，提供地道向量化方案</p>
-            </div>
-            <div class="segmented" id="lint-mode-seg">
-              <button type="button" class="seg-btn active" data-lint-mode="check">代码 / 文件体检</button>
-              <button type="button" class="seg-btn" data-lint-mode="recipes">15 套向量化速查表</button>
-            </div>
-          </header>
-
-          <div id="lint-view-check" class="view-stack">
-            <div class="card">
-              <div class="input-row">
-                <input type="text" id="lint-file-input" placeholder="可选：选择本地 .do 文件路径（留空则检查下方代码框）" />
-                <button class="btn btn-ghost" id="btn-pick-do">选择 .do…</button>
-                <button class="btn btn-ghost" id="btn-clear-do">清除路径</button>
+            <div class="header-title-row">
+              <h1>实证监控</h1>
+              <div class="segmented compact" id="monitor-filter-seg">
+                <button type="button" class="seg-btn active" data-job-filter="all">全部</button>
+                <button type="button" class="seg-btn" data-job-filter="running">运行中</button>
+                <button type="button" class="seg-btn" data-job-filter="failed">失败</button>
+                <button type="button" class="seg-btn" data-job-filter="finished">已完成</button>
               </div>
-              <textarea id="lint-code-input" class="code-input" rows="9" placeholder="在此粘贴 Stata 代码进行反循环与常见陷阱检测…">levelsof industry, local(inds)
-foreach g of local inds {
-    summarize sales if industry == `g'
-    replace ind_mean = r(mean) if industry == `g'
-}
-keep if sales > 0</textarea>
-              <div class="action-bar between">
-                <div class="left-group">
-                  <label class="checkbox-inline">
-                    <input type="checkbox" id="chk-lint-strict" /> 严格模式（含规格循环提示与 merge 检查）
-                  </label>
-                  <button class="btn btn-ghost btn-sm" id="btn-load-sample">恢复示例</button>
-                </div>
-                <button class="btn btn-primary" id="btn-run-lint">开始体检</button>
-              </div>
-            </div>
-
-            <div class="card">
-              <h2>体检报告与改写建议</h2>
-              <div id="lint-score-banner" class="score-banner hidden"></div>
-              <div id="lint-result-box" class="lint-results">点击“开始体检”查看代码评分、定位行号与向量化改写示例</div>
-            </div>
-          </div>
-
-          <div id="lint-view-recipes" class="view-stack hidden">
-            <div class="card">
-              <div class="card-header-row">
-                <h2>15 类 Stata 向量化替代方案</h2>
-                <input type="text" class="search-inline" id="recipe-filter-input" placeholder="过滤场景（如 分组 / 滞后 / frame）…" />
-              </div>
-              <div id="recipes-grid" class="recipes-stack"></div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- 6. 诊断与日志 -->
-      <section class="tab-panel" id="tab-doctor">
-        <div class="workspace-container">
-          <header class="panel-header">
-            <div>
-              <h1>环境诊断与运行日志</h1>
-              <p>检查本机探测详情、服务进程日志，或安全移除运行时</p>
             </div>
             <div class="header-actions">
-              <button class="btn btn-ghost" id="btn-reload-logs">刷新诊断与日志</button>
-              <button class="btn btn-danger" id="btn-uninstall">卸载运行时</button>
+              <button type="button" class="btn btn-ghost btn-sm" id="btn-reload-jobs">刷新</button>
+              <button type="button" class="btn btn-secondary btn-sm" id="btn-open-log-modal">查看服务日志</button>
             </div>
           </header>
 
-          <div class="cards-grid">
-            <div class="card metric-card">
-              <div class="card-label">平台与架构</div>
-              <div class="card-value" id="doc-platform">—</div>
-              <div class="card-meta" id="doc-stata-count">—</div>
-            </div>
-            <div class="card metric-card">
-              <div class="card-label">Python 与工具链</div>
-              <div class="card-value" id="doc-python">—</div>
-              <div class="card-meta" id="doc-tools">—</div>
-            </div>
-            <div class="card metric-card">
-              <div class="card-label">状态目录</div>
-              <div class="card-value mono small" id="doc-home">—</div>
-              <div class="card-meta" id="doc-installed">—</div>
-            </div>
-            <div class="card metric-card">
-              <div class="card-label">作业记录</div>
-              <div class="card-value" id="doc-jobs">—</div>
-              <div class="card-meta" id="doc-problems">—</div>
-            </div>
+          <div class="timeline-list" id="monitor-timeline">
+            <div class="empty-card">暂无 Stata 实证作业记录</div>
           </div>
-
-          <div class="card">
-            <div class="card-header-row wrap">
-              <div class="segmented compact" id="log-tabs-seg">
-                <button type="button" class="seg-btn active" data-log="server.log">server.log</button>
-                <button type="button" class="seg-btn" data-log="server.console.log">server.console</button>
-                <button type="button" class="seg-btn" data-log="gateway.log">gateway.log</button>
-                <button type="button" class="seg-btn" data-log="gateway.console.log">gateway.console</button>
-              </div>
-              <button class="btn btn-ghost btn-sm" id="btn-copy-log-tail">复制当前日志</button>
-            </div>
-            <pre class="console-box reader-box" id="log-tail-box">—</pre>
-          </div>
-
-          <details class="card">
-            <summary class="drawer-summary">
-              <span>完整 Doctor JSON 诊断快照</span>
-              <button type="button" class="btn btn-ghost btn-sm" id="btn-copy-doctor-json">复制 JSON</button>
-            </summary>
-            <pre class="code-box" id="doctor-json-box">加载中…</pre>
-          </details>
         </div>
       </section>
     </main>
   </div>
+
+  <!-- 右侧滑出：高级设置抽屉 -->
+  <div class="backdrop hidden" id="drawer-backdrop"></div>
+  <aside class="slide-drawer hidden" id="advanced-drawer" aria-label="高级设置">
+    <header class="drawer-head">
+      <h2>高级设置</h2>
+      <button type="button" class="btn btn-ghost btn-sm" id="btn-close-advanced">关闭</button>
+    </header>
+
+    <div class="drawer-body">
+      <section class="drawer-section">
+        <h3>环境安装镜像（Python / uv）</h3>
+        <div class="mirror-row" id="env-mirror-links">
+          <button type="button" class="mirror-chip-btn" data-open-url="https://mirrors.huaweicloud.com/python/">Python 华为云镜像</button>
+          <button type="button" class="mirror-chip-btn" data-open-url="https://registry.npmmirror.com/binary.html?path=python/">Python 阿里镜像</button>
+          <button type="button" class="mirror-chip-btn" data-open-url="https://www.python.org/downloads/">Python 官方</button>
+          <button type="button" class="mirror-chip-btn" data-open-url="https://docs.astral.sh/uv/getting-started/installation/">uv 安装官网</button>
+        </div>
+      </section>
+
+      <section class="drawer-section">
+        <h3>PyPI 依赖加速源</h3>
+        <div class="mirror-row" id="pypi-mirror-presets">
+          <button type="button" class="mirror-chip-btn active" data-pip-index="" data-mirror-label="默认官方源">官方默认</button>
+          <button type="button" class="mirror-chip-btn" data-pip-index="https://pypi.tuna.tsinghua.edu.cn/simple" data-mirror-label="清华源">清华 TUNA</button>
+          <button type="button" class="mirror-chip-btn" data-pip-index="https://mirrors.aliyun.com/pypi/simple/" data-mirror-label="阿里云源">阿里云</button>
+          <button type="button" class="mirror-chip-btn" data-pip-index="https://pypi.mirrors.ustc.edu.cn/simple/" data-mirror-label="中科大源">中科大</button>
+          <button type="button" class="mirror-chip-btn" data-pip-index="https://mirrors.cloud.tencent.com/pypi/simple" data-mirror-label="腾讯云源">腾讯云</button>
+        </div>
+        <label class="field-label">
+          <span>自定义 PyPI 镜像 URL（留空用系统默认）</span>
+          <input type="text" id="in-pip-index" placeholder="https://pypi.tuna.tsinghua.edu.cn/simple" />
+        </label>
+      </section>
+
+      <section class="drawer-section">
+        <h3>端口与任务超时</h3>
+        <div class="form-grid two-col">
+          <label class="field-label">
+            <span>服务端口（单端口融合）</span>
+            <input type="number" id="in-port" value="4001" min="1024" max="65530" />
+          </label>
+          <label class="field-label">
+            <span>长任务超时（秒）</span>
+            <input type="number" id="in-timeout" value="21600" min="60" />
+          </label>
+        </div>
+      </section>
+
+      <section class="drawer-section">
+        <div class="card-header-row">
+          <h3>客户端配置预览与安全写入</h3>
+          <button type="button" class="btn btn-ghost btn-xs" id="btn-copy-config-drawer">复制 JSON</button>
+        </div>
+        <pre class="code-box" id="cfg-snippet-box">{}</pre>
+        <div class="form-grid three-col">
+          <label class="field-label">
+            <span>配置根键</span>
+            <input type="text" id="cfg-root" value="mcpServers" />
+          </label>
+          <label class="field-label">
+            <span>服务器键名</span>
+            <input type="text" id="cfg-key" value="stata-mcp" />
+          </label>
+          <label class="field-label">
+            <span>toolTimeoutMs（可选）</span>
+            <input type="number" id="cfg-timeout-ms" placeholder="如 120000" min="1000" />
+          </label>
+        </div>
+        <div class="input-row">
+          <input type="text" id="cfg-target-file" placeholder="手动选择客户端 JSON 文件路径…" />
+          <button type="button" class="btn btn-ghost btn-sm" id="btn-pick-config">浏览…</button>
+        </div>
+        <div class="inline-wrap">
+          <button type="button" class="btn btn-ghost btn-sm" id="btn-write-config-dry">预演 (dry-run)</button>
+          <button type="button" class="btn btn-primary btn-sm" id="btn-write-config">安全合并写入</button>
+        </div>
+        <pre class="mini-output" id="cfg-write-result">未写入任何文件</pre>
+      </section>
+
+      <section class="drawer-section">
+        <h3>维护与诊断</h3>
+        <div class="inline-wrap">
+          <button type="button" class="btn btn-secondary btn-sm" id="btn-refresh-bin">原地升级脚本 (refresh)</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="btn-open-home">打开状态目录</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="btn-copy-doctor-json">复制诊断 JSON</button>
+          <button type="button" class="btn btn-danger btn-sm" id="btn-uninstall">卸载运行时</button>
+        </div>
+        <details class="mini-details">
+          <summary>查看 Doctor 诊断详情</summary>
+          <pre class="code-box" id="doctor-json-box">加载中…</pre>
+        </details>
+      </section>
+    </div>
+  </aside>
+
+  <!-- 服务日志查看弹窗 -->
+  <div class="backdrop hidden" id="log-modal-backdrop"></div>
+  <section class="modal-dialog hidden" id="log-modal" role="dialog" aria-modal="true" aria-label="服务日志">
+    <header class="drawer-head">
+      <div class="segmented compact" id="log-tabs-seg">
+        <button type="button" class="seg-btn active" data-log="server.log">server.log</button>
+        <button type="button" class="seg-btn" data-log="server.console.log">server.console</button>
+        <button type="button" class="seg-btn" data-log="gateway.log">gateway.log</button>
+        <button type="button" class="seg-btn" data-log="gateway.console.log">gateway.console</button>
+      </div>
+      <div class="inline-wrap">
+        <button type="button" class="btn btn-ghost btn-xs" id="btn-reload-logs">刷新</button>
+        <button type="button" class="btn btn-ghost btn-xs" id="btn-copy-log-tail">复制</button>
+        <button type="button" class="btn btn-ghost btn-xs" id="btn-close-log-modal">关闭</button>
+      </div>
+    </header>
+    <pre class="console-box modal-log-box" id="log-tail-box">—</pre>
+  </section>
 
   <div class="m3-snackbar" id="app-snackbar" role="status" aria-live="polite"></div>
   <script type="module" src="./renderer.mjs"></script>

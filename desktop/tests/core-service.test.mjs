@@ -8,7 +8,10 @@ import { fileURLToPath } from "node:url";
 import {
   buildAugmentedEnv,
   CoreService,
+  detectInstalledAgents,
   findPythonCommand,
+  inspectResearchFolder,
+  posixSingleQuote,
   resolveCoreRoot,
 } from "../app/core-service.mjs";
 import { createRequire } from "node:module";
@@ -80,11 +83,11 @@ test("afterPack no-ops cleanly on non-darwin targets", async () => {
   await afterPack({ electronPlatformName: "win32" });
 });
 
-test("renderer HTML contains all 6 tabs and every ID referenced by renderer.mjs", () => {
+test("renderer HTML contains all 3 tabs and every ID referenced by renderer.mjs", () => {
   const html = fs.readFileSync(path.join(desktopDir, "app", "renderer", "index.html"), "utf8");
   const js = fs.readFileSync(path.join(desktopDir, "app", "renderer", "renderer.mjs"), "utf8");
 
-  for (const tab of ["overview", "config", "jobs", "help", "lint", "doctor"]) {
+  for (const tab of ["config", "terminal", "monitor"]) {
     assert.ok(html.includes(`id="tab-${tab}"`), `missing tab-${tab}`);
     assert.ok(html.includes(`data-tab="${tab}"`), `missing data-tab=${tab}`);
   }
@@ -98,10 +101,13 @@ test("renderer HTML contains all 6 tabs and every ID referenced by renderer.mjs"
   for (const extraId of [
     "global-progress-bar",
     "app-snackbar",
-    "workflow-stepper",
+    "advanced-drawer",
     "env-mirror-links",
     "pypi-mirror-presets",
     "in-pip-index",
+    "term-agents-grid",
+    "monitor-timeline",
+    "log-modal",
   ]) {
     assert.ok(html.includes(`id="${extraId}"`), `missing UI id: ${extraId}`);
   }
@@ -109,8 +115,48 @@ test("renderer HTML contains all 6 tabs and every ID referenced by renderer.mjs"
     fs.existsSync(path.join(repoRoot, "server", "src", "stata_mcp_server.py")),
     "bundled server/src/stata_mcp_server.py should exist in repo",
   );
-  assert.ok(html.includes("data-motion-choice"));
-  assert.ok(html.includes("data-density-choice"));
+  assert.ok(html.includes("data-theme-choice"));
+});
+
+test("detectInstalledAgents finds installed apps and CLI binaries", () => {
+  const found = detectInstalledAgents({
+    platform: "darwin",
+    env: { PATH: "/opt/homebrew/bin" },
+    homeDir: "/Users/tester",
+    existsSync: (p) => p === "/opt/homebrew/bin/claude" || p === "/Applications/Cursor.app",
+  });
+  const byId = Object.fromEntries(found.map((a) => [a.id, a]));
+  assert.equal(byId.claude.installed, true);
+  assert.equal(byId.cursor.installed, true);
+  assert.equal(byId.shell.installed, true);
+  assert.equal(byId.codex.installed, false);
+});
+
+test("inspectResearchFolder counts .do/.dta files and checks .mcp.json", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "stata-mcp-proj-"));
+  try {
+    fs.mkdirSync(path.join(tmp, "code"));
+    fs.writeFileSync(path.join(tmp, "main.do"), "display 1\n", "utf8");
+    fs.writeFileSync(path.join(tmp, "code", "clean.do"), "display 2\n", "utf8");
+    fs.writeFileSync(path.join(tmp, "data.dta"), "", "utf8");
+    fs.writeFileSync(
+      path.join(tmp, ".mcp.json"),
+      JSON.stringify({ mcpServers: { "stata-mcp": { command: "python3" } } }),
+      "utf8",
+    );
+    const info = inspectResearchFolder(tmp);
+    assert.equal(info.ok, true);
+    assert.equal(info.doCount, 2);
+    assert.equal(info.dtaCount, 1);
+    assert.equal(info.hasMcpJson, true);
+    assert.equal(info.hasStataMcpEntry, true);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("posixSingleQuote safely escapes single quotes and spaces", () => {
+  assert.equal(posixSingleQuote("/Users/test/my paper's dir"), "'/Users/test/my paper'\\''s dir'");
 });
 
 test("CoreService rejects concurrent runAction while an action is active", async () => {

@@ -31,6 +31,7 @@ export function buildAugmentedEnv({
       "/opt/homebrew/bin",
       "/usr/local/bin",
       p.join(homeDir, ".local", "bin"),
+      p.join(homeDir, ".npm-global", "bin"),
       p.join(homeDir, ".cargo", "bin"),
       "/Library/Frameworks/Python.framework/Versions/Current/bin",
       "/usr/bin",
@@ -38,8 +39,10 @@ export function buildAugmentedEnv({
     );
   } else if (platform === "win32") {
     const localApp = env.LOCALAPPDATA || p.join(homeDir, "AppData", "Local");
+    const roamingApp = env.APPDATA || p.join(homeDir, "AppData", "Roaming");
     extras.push(
       p.join(homeDir, ".local", "bin"),
+      p.join(roamingApp, "npm"),
       p.join(localApp, "Programs", "Python", "Python313"),
       p.join(localApp, "Programs", "Python", "Python312"),
       p.join(localApp, "Programs", "Python", "Python311"),
@@ -47,7 +50,7 @@ export function buildAugmentedEnv({
       p.join(localApp, "Programs", "Python", "Python39"),
     );
   } else {
-    extras.push("/usr/local/bin", p.join(homeDir, ".local", "bin"));
+    extras.push("/usr/local/bin", p.join(homeDir, ".local", "bin"), p.join(homeDir, ".npm-global", "bin"));
   }
 
   const merged = [];
@@ -157,6 +160,293 @@ export function httpGetJson(host, port, urlPath, timeoutMs = 2000) {
     });
     req.end();
   });
+}
+
+export function posixSingleQuote(str) {
+  return `'${String(str ?? "").replace(/'/g, "'\\''")}'`;
+}
+
+export function findExecutableInPath(
+  binName,
+  {
+    platform = process.platform,
+    env = process.env,
+    homeDir = os.homedir(),
+    existsSync = fs.existsSync,
+  } = {},
+) {
+  const clean = String(binName || "").trim();
+  if (!clean) return "";
+  const augmented = buildAugmentedEnv({ platform, env, homeDir });
+  const p = platform === "win32" ? path.win32 : path.posix;
+  const sep = platform === "win32" ? ";" : ":";
+  const dirs = String(augmented.PATH || "").split(sep).filter(Boolean);
+  const candidates =
+    platform === "win32" && !/\.(exe|cmd|bat)$/i.test(clean)
+      ? [clean, `${clean}.exe`, `${clean}.cmd`, `${clean}.bat`]
+      : [clean];
+  for (const dir of dirs) {
+    for (const file of candidates) {
+      const full = p.join(dir, file);
+      try {
+        if (existsSync(full)) return full;
+      } catch {
+        // ignore invalid path entry
+      }
+    }
+  }
+  return "";
+}
+
+export function detectInstalledAgents({
+  platform = process.platform,
+  env = process.env,
+  homeDir = os.homedir(),
+  existsSync = fs.existsSync,
+} = {}) {
+  const p = platform === "win32" ? path.win32 : path.posix;
+  const localApp = env.LOCALAPPDATA || p.join(homeDir, "AppData", "Local");
+  const programFiles = env.ProgramFiles || "C:\\Program Files";
+
+  const firstExisting = (pathsList) => {
+    for (const item of pathsList) {
+      if (!item) continue;
+      try {
+        if (existsSync(item)) return item;
+      } catch {
+        // ignore
+      }
+    }
+    return "";
+  };
+
+  const resolveCli = (bins) => {
+    for (const b of bins) {
+      const hit = findExecutableInPath(b, { platform, env, homeDir, existsSync });
+      if (hit) return hit;
+    }
+    return "";
+  };
+
+  const macAppPaths = (appName) => [
+    p.join("/Applications", appName),
+    p.join(homeDir, "Applications", appName),
+  ];
+
+  const defs = [
+    {
+      id: "claude",
+      name: "Claude Code",
+      kind: "cli",
+      desc: "终端打开目录并运行 claude",
+      bins: ["claude"],
+      command: "claude",
+    },
+    {
+      id: "codex",
+      name: "Codex CLI",
+      kind: "cli",
+      desc: "终端打开目录并运行 codex",
+      bins: ["codex"],
+      command: "codex",
+    },
+    {
+      id: "gemini",
+      name: "Gemini CLI",
+      kind: "cli",
+      desc: "终端打开目录并运行 gemini",
+      bins: ["gemini"],
+      command: "gemini",
+    },
+    {
+      id: "antigravity",
+      name: "Antigravity",
+      kind: "app",
+      desc: "使用 Antigravity 打开科研目录",
+      bins: ["agy", "antigravity"],
+      apps:
+        platform === "darwin"
+          ? macAppPaths("Antigravity.app")
+          : platform === "win32"
+            ? [
+                p.join(localApp, "Programs", "Antigravity", "Antigravity.exe"),
+                p.join(programFiles, "Antigravity", "Antigravity.exe"),
+              ]
+            : [],
+    },
+    {
+      id: "cursor",
+      name: "Cursor",
+      kind: "app",
+      desc: "使用 Cursor 打开科研目录",
+      bins: ["cursor"],
+      apps:
+        platform === "darwin"
+          ? macAppPaths("Cursor.app")
+          : platform === "win32"
+            ? [
+                p.join(localApp, "Programs", "cursor", "Cursor.exe"),
+                p.join(localApp, "Programs", "Cursor", "Cursor.exe"),
+              ]
+            : [],
+    },
+    {
+      id: "vscode",
+      name: "VS Code",
+      kind: "app",
+      desc: "使用 VS Code 打开科研目录",
+      bins: ["code"],
+      apps:
+        platform === "darwin"
+          ? macAppPaths("Visual Studio Code.app")
+          : platform === "win32"
+            ? [
+                p.join(localApp, "Programs", "Microsoft VS Code", "Code.exe"),
+                p.join(programFiles, "Microsoft VS Code", "Code.exe"),
+              ]
+            : [],
+    },
+    {
+      id: "windsurf",
+      name: "Windsurf",
+      kind: "app",
+      desc: "使用 Windsurf 打开科研目录",
+      bins: ["windsurf"],
+      apps:
+        platform === "darwin"
+          ? macAppPaths("Windsurf.app")
+          : platform === "win32"
+            ? [p.join(localApp, "Programs", "Windsurf", "Windsurf.exe")]
+            : [],
+    },
+    {
+      id: "trae",
+      name: "Trae",
+      kind: "app",
+      desc: "使用 Trae 打开科研目录",
+      bins: ["trae"],
+      apps:
+        platform === "darwin"
+          ? macAppPaths("Trae.app")
+          : platform === "win32"
+            ? [p.join(localApp, "Programs", "Trae", "Trae.exe")]
+            : [],
+    },
+    {
+      id: "shell",
+      name: "系统终端",
+      kind: "cli",
+      desc: platform === "win32" ? "在当前目录打开 PowerShell" : "在当前目录打开 Terminal",
+      alwaysInstalled: true,
+      command: "",
+    },
+  ];
+
+  const items = defs.map((d) => {
+    if (d.alwaysInstalled) {
+      return {
+        id: d.id,
+        name: d.name,
+        kind: d.kind,
+        desc: d.desc,
+        installed: true,
+        target: "",
+        command: d.command || "",
+      };
+    }
+    const appTarget = d.apps ? firstExisting(d.apps) : "";
+    const cliTarget = resolveCli(d.bins || []);
+    const target = d.kind === "app" ? appTarget || cliTarget : cliTarget;
+    return {
+      id: d.id,
+      name: d.name,
+      kind: d.kind,
+      desc: d.desc,
+      installed: Boolean(target),
+      target,
+      command: d.kind === "cli" ? d.command || d.bins[0] : "",
+    };
+  });
+
+  return items.sort((a, b) => Number(b.installed) - Number(a.installed));
+}
+
+export function inspectResearchFolder(dirPath) {
+  const raw = String(dirPath || "").trim();
+  if (!raw) {
+    return { ok: false, error: "请选择项目文件夹" };
+  }
+  const resolved = path.resolve(raw);
+  try {
+    const st = fs.statSync(resolved);
+    if (!st.isDirectory()) {
+      return { ok: false, error: "所选路径不是文件夹" };
+    }
+  } catch {
+    return { ok: false, error: "文件夹不存在或无权访问" };
+  }
+
+  const skipDirs = new Set([".git", "node_modules", "venv", ".venv", "__pycache__", ".stata-mcp"]);
+  const doFiles = [];
+  const dtaFiles = [];
+  let doCount = 0;
+  let dtaCount = 0;
+  let visited = 0;
+  const maxEntries = 600;
+
+  const scan = (currentDir, relBase, depth) => {
+    if (visited >= maxEntries) return;
+    let entries = [];
+    try {
+      entries = fs.readdirSync(currentDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const ent of entries) {
+      if (visited >= maxEntries) break;
+      visited += 1;
+      const rel = relBase ? `${relBase}/${ent.name}` : ent.name;
+      if (ent.isDirectory()) {
+        if (depth < 2 && !skipDirs.has(ent.name)) {
+          scan(path.join(currentDir, ent.name), rel, depth + 1);
+        }
+      } else if (ent.isFile()) {
+        const lower = ent.name.toLowerCase();
+        if (lower.endsWith(".do")) {
+          doCount += 1;
+          if (doFiles.length < 6) doFiles.push(rel);
+        } else if (lower.endsWith(".dta")) {
+          dtaCount += 1;
+          if (dtaFiles.length < 6) dtaFiles.push(rel);
+        }
+      }
+    }
+  };
+  scan(resolved, "", 0);
+
+  const mcpJsonPath = path.join(resolved, ".mcp.json");
+  const hasMcpJson = fs.existsSync(mcpJsonPath);
+  let hasStataMcpEntry = false;
+  if (hasMcpJson) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(mcpJsonPath, "utf8"));
+      hasStataMcpEntry = Boolean(parsed?.mcpServers && parsed.mcpServers["stata-mcp"]);
+    } catch {
+      hasStataMcpEntry = false;
+    }
+  }
+
+  return {
+    ok: true,
+    path: resolved,
+    name: path.basename(resolved) || resolved,
+    doCount,
+    dtaCount,
+    doFiles,
+    dtaFiles,
+    hasMcpJson,
+    hasStataMcpEntry,
+  };
 }
 
 export class CoreService {
@@ -541,9 +831,9 @@ export class CoreService {
     }
   }
 
-  readLogTail(logName = "gateway.log", lines = 120) {
+  readLogTail(logName = "server.log", lines = 120) {
     const allowed = new Set(["gateway.log", "server.log", "gateway.console.log", "server.console.log"]);
-    const target = allowed.has(logName) ? logName : "gateway.log";
+    const target = allowed.has(logName) ? logName : "server.log";
     const full = path.join(this.resolveStateHome(), "logs", target);
     if (!fs.existsSync(full)) {
       return { exists: false, path: full, content: "(日志文件尚不存在)" };
@@ -554,5 +844,189 @@ export class CoreService {
     } catch (err) {
       return { exists: false, path: full, content: err.message };
     }
+  }
+
+  detectAgents() {
+    return detectInstalledAgents({
+      platform: this.platform,
+      env: this.env,
+    });
+  }
+
+  inspectProjectDir(folderPath) {
+    return inspectResearchFolder(folderPath);
+  }
+
+  async writeProjectMcpConfig({ folderPath, transport = "stdio", dryRun = false } = {}) {
+    const check = inspectResearchFolder(folderPath);
+    if (!check.ok) {
+      return { ok: false, message: check.error };
+    }
+    return this.writeClientConfig({
+      filePath: path.join(check.path, ".mcp.json"),
+      transport,
+      root: "mcpServers",
+      key: "stata-mcp",
+      dryRun,
+    });
+  }
+
+  _spawnDetached(command, args, opts = {}) {
+    return new Promise((resolve) => {
+      try {
+        const child = spawn(command, args, {
+          detached: true,
+          stdio: "ignore",
+          env: this.env,
+          ...opts,
+        });
+        let settled = false;
+        child.once("error", (err) => {
+          if (settled) return;
+          settled = true;
+          resolve({ ok: false, error: err.message });
+        });
+        child.once("spawn", () => {
+          if (settled) return;
+          settled = true;
+          child.unref();
+          resolve({ ok: true });
+        });
+      } catch (err) {
+        resolve({ ok: false, error: err.message });
+      }
+    });
+  }
+
+  async launchAgentInFolder({ folderPath, agentId = "shell", customCommand = "", ensureService = true } = {}) {
+    const info = inspectResearchFolder(folderPath);
+    if (!info.ok) {
+      return { ok: false, error: info.error };
+    }
+    const targetDir = info.path;
+    let serviceStarted = false;
+
+    if (ensureService) {
+      const state = this._loadState();
+      const host = state.host || "127.0.0.1";
+      const port = Number(state.port || 4001);
+      const healthy = await httpGetJson(host, port, "/health", 1500);
+      if (!healthy) {
+        const stateFile = path.join(this.resolveStateHome(), "state.json");
+        if (!fs.existsSync(stateFile)) {
+          return {
+            ok: false,
+            needsInstall: true,
+            error: "Stata MCP 运行时尚未安装，请先在「配置」页点击「一键安装」。",
+          };
+        }
+        const startRes = await this.runAction("start");
+        if (!startRes.ok) {
+          return {
+            ok: false,
+            error: `自动启动 Stata MCP 服务失败：${startRes.stderr || startRes.stdout || "请查看控制台日志"}`,
+          };
+        }
+        serviceStarted = true;
+      }
+    }
+
+    const agents = this.detectAgents();
+    const matched = agents.find((a) => a.id === agentId);
+    const cleanCustom = String(customCommand || "").trim();
+
+    if (matched && matched.kind === "app") {
+      if (!matched.installed || !matched.target) {
+        return { ok: false, error: `未在本机检测到 ${matched.name}` };
+      }
+      let launchRes;
+      if (this.platform === "darwin") {
+        if (matched.target.endsWith(".app")) {
+          launchRes = await this._spawnDetached("open", ["-a", matched.target, targetDir]);
+        } else {
+          launchRes = await this._spawnDetached(matched.target, [targetDir]);
+        }
+      } else if (this.platform === "win32") {
+        if (/\.exe$/i.test(matched.target)) {
+          launchRes = await this._spawnDetached(matched.target, [targetDir], { windowsHide: false });
+        } else {
+          launchRes = await this._spawnDetached("cmd.exe", ["/c", "start", "", matched.target, targetDir], {
+            windowsHide: true,
+          });
+        }
+      } else {
+        launchRes = await this._spawnDetached(matched.target, [targetDir]);
+      }
+      if (!launchRes.ok) return launchRes;
+      return { ok: true, launched: matched.name, folderPath: targetDir, serviceStarted };
+    }
+
+    const cmdToRun =
+      agentId === "custom"
+        ? cleanCustom
+        : matched?.id === "shell"
+          ? ""
+          : matched?.command || "";
+    if (agentId === "custom" && !cmdToRun) {
+      return { ok: false, error: "请输入要执行的自定义终端命令" };
+    }
+    if (matched && matched.kind === "cli" && matched.id !== "shell" && !matched.installed) {
+      return { ok: false, error: `未在 PATH 中检测到 ${matched.name} (${matched.command})` };
+    }
+
+    let termRes;
+    if (this.platform === "darwin") {
+      const shellCmd = cmdToRun
+        ? `cd ${posixSingleQuote(targetDir)} && ${cmdToRun}`
+        : `cd ${posixSingleQuote(targetDir)}`;
+      const appleScript = [
+        "on run argv",
+        '  tell application "Terminal"',
+        "    activate",
+        "    do script (item 1 of argv)",
+        "  end tell",
+        "end run",
+      ].join("\n");
+      termRes = await this._spawnDetached("osascript", ["-e", appleScript, shellCmd]);
+    } else if (this.platform === "win32") {
+      const psEscapedDir = targetDir.replace(/'/g, "''");
+      const psCmd = cmdToRun
+        ? `Set-Location -LiteralPath '${psEscapedDir}'; ${cmdToRun}`
+        : `Set-Location -LiteralPath '${psEscapedDir}'`;
+      const wt = findExecutableInPath("wt.exe", { platform: this.platform, env: this.env });
+      if (wt) {
+        termRes = await this._spawnDetached(wt, ["-d", targetDir, "powershell.exe", "-NoExit", "-Command", psCmd]);
+      } else {
+        termRes = await this._spawnDetached(
+          "cmd.exe",
+          ["/c", "start", "", "powershell.exe", "-NoExit", "-Command", psCmd],
+          { cwd: targetDir },
+        );
+      }
+    } else {
+      const shellCmd = cmdToRun
+        ? `cd ${posixSingleQuote(targetDir)} && ${cmdToRun}; exec "$SHELL"`
+        : `cd ${posixSingleQuote(targetDir)}; exec "$SHELL"`;
+      const termBin =
+        findExecutableInPath("x-terminal-emulator", { platform: this.platform, env: this.env }) ||
+        findExecutableInPath("gnome-terminal", { platform: this.platform, env: this.env }) ||
+        findExecutableInPath("xterm", { platform: this.platform, env: this.env });
+      if (!termBin) {
+        return { ok: false, error: "未检测到可用的系统终端模拟器" };
+      }
+      if (termBin.endsWith("gnome-terminal")) {
+        termRes = await this._spawnDetached(termBin, [`--working-directory=${targetDir}`, "--", "bash", "-lc", shellCmd]);
+      } else {
+        termRes = await this._spawnDetached(termBin, ["-e", "bash", "-lc", shellCmd]);
+      }
+    }
+
+    if (!termRes.ok) return termRes;
+    return {
+      ok: true,
+      launched: agentId === "custom" ? cmdToRun : matched?.name || "系统终端",
+      folderPath: targetDir,
+      serviceStarted,
+    };
   }
 }

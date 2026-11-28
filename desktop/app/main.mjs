@@ -1,4 +1,5 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, shell, Tray } from "electron";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CoreService } from "./core-service.mjs";
@@ -80,7 +81,7 @@ function createTray() {
       },
       { type: "separator" },
       {
-        label: "启动后台网关与引擎",
+        label: "启动后台服务",
         click: async () => {
           await service?.runAction("start");
           broadcastStateChanged();
@@ -156,6 +157,18 @@ ipcMain.handle("app:search-help", (_e, opts) => service.searchHelp(opts));
 ipcMain.handle("app:lint-do", (_e, opts) => service.lintDo(opts));
 ipcMain.handle("app:vectorize-guide", (_e, opts) => service.vectorizeGuide(opts));
 ipcMain.handle("app:read-log", (_e, logName, lines) => service.readLogTail(logName, lines));
+ipcMain.handle("app:detect-agents", () => service.detectAgents());
+ipcMain.handle("app:inspect-project", (_e, folderPath) => service.inspectProjectDir(folderPath));
+ipcMain.handle("app:launch-agent", (_e, opts) => service.launchAgentInFolder(opts));
+ipcMain.handle("app:write-project-mcp", (_e, opts) => service.writeProjectMcpConfig(opts));
+ipcMain.handle("app:open-folder", async (_e, folderPath) => {
+  const target = path.resolve(String(folderPath || "").trim());
+  if (!target || !fs.existsSync(target) || !fs.statSync(target).isDirectory()) {
+    throw new Error("目标文件夹不存在");
+  }
+  await shell.openPath(target);
+  return { path: target };
+});
 ipcMain.handle("app:copy-text", (_e, text) => {
   clipboard.writeText(String(text || ""));
   return { ok: true };
@@ -178,6 +191,15 @@ ipcMain.handle("dialog:pick-stata-dir", async (event) => {
   const parent = BrowserWindow.fromWebContents(event.sender) || mainWindow;
   const res = await dialog.showOpenDialog(parent, {
     title: "选择 Stata 安装根目录",
+    properties: ["openDirectory"],
+  });
+  return res.canceled ? "" : res.filePaths[0];
+});
+
+ipcMain.handle("dialog:pick-project-dir", async (event) => {
+  const parent = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+  const res = await dialog.showOpenDialog(parent, {
+    title: "选择科研项目文件夹",
     properties: ["openDirectory"],
   });
   return res.canceled ? "" : res.filePaths[0];

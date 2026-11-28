@@ -156,16 +156,13 @@ MCP 客户端 ──stdio──> bin/stata-mcp-bridge.py ──HTTP(127.0.0.1:40
 支持 Streamable HTTP 的客户端 ──HTTP(127.0.0.1:4001/mcp-streamable)─────┘
 ```
 
-### Stata MCP Studio 桌面端工作区（6 大页面）
+### Stata MCP Studio 桌面端工作区（3 大精简页面）
 
 | 工作区 | 提供的能力 |
 |---|---|
-| 概览部署 | 三步向导：自动扫描 Stata 与 Python/uv 环境、一键直达环境安装镜像网站、PyPI 镜像加速选择与一键部署、单端口启停与 `verify` 实时终端流 |
-| 客户端接入 | 一键切换 `stdio` / `Streamable HTTP`、自定义根键/条目名/超时、Dry-Run 预览与安全合并写入、17 工具分类检索卡片 |
-| 作业与报错 | Master-Detail 查看实时 `journal.log`、一键停止运行中作业；失败作业高亮原 `.do` 报错行号、源码上下文、`r(NNN)` 建议并直跳 Help |
-| Help 速查 | 离线检索与渲染本机 Stata/SSC `.sthlp`，支持别名解析、章节过滤、相关主题（Also see）与可点击模糊搜索列表 |
-| 反循环体检 | 文件/粘贴代码静态检查、地道度评分（0–100）、精确行号改写复制，内置 15 套经真实 Stata 验证的向量化对照速查表 |
-| 诊断与日志 | 平台/工具链/状态目录/作业数概览、4 类日志实时查看（`gateway.log`、`server.log`、`*.console.log`）、Doctor JSON 快照与安全卸载 |
+| 配置 | 极致单屏 3 行（Stata 路径探测、`:4001` 本地服务一键安装/启停/自检、MCP 配置复制）；环境下载镜像（华为云/阿里云/官方）、PyPI 加速源、文件合并写入、端口与卸载收于右上角「高级设置」抽屉 |
+| 科研终端 | 管理常用科研项目目录（自动扫描 `.do`/`.dta` 与 `.mcp.json` 状态），一键在选定目录拉起 Claude Code、Codex、Gemini CLI、Antigravity、Cursor、VS Code、Windsurf、Trae、系统终端或自定义命令，启动前自动确保 `:4001` 在线并可按需写入项目 `.mcp.json` / 复制科研 5 步规范提示词 |
+| 实证监控 | 单列倒序可展开时间线实时追踪 Stata 作业、失败时高亮原 `.do` 精确报错行号与修复建议、一键中止运行中作业，右上角弹窗查看 `server.log` |
 
 ### 私有状态目录与隐私保证
 
