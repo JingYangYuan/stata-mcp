@@ -29,7 +29,7 @@
         </div>
         <div class="brand-text">
           <div class="brand-title">Stata MCP</div>
-          <div class="brand-sub" id="brand-sub-version">v1.5.2 · 单端口</div>
+          <div class="brand-sub" id="brand-sub-version">v1.5.3 · 单端口</div>
         </div>
       </div>
 
@@ -197,11 +197,14 @@
           <!-- Agent 启动目标网格 -->
           <section class="card section-card">
             <div class="card-header-row">
-              <span class="section-label">选择要打开的 Agent / 终端</span>
-              <label class="terminal-picker" for="term-app-select">
-                <span class="setup-meta">默认终端</span>
-                <select id="term-app-select" aria-label="选择默认终端应用"></select>
-              </label>
+              <span class="section-label">我的 Agent / 终端卡片</span>
+              <div class="inline-wrap">
+                <label class="terminal-picker" for="term-app-select">
+                  <span class="setup-meta">默认终端</span>
+                  <select id="term-app-select" aria-label="选择默认终端应用"></select>
+                </label>
+                <button type="button" class="btn btn-primary btn-sm" id="btn-add-agent-card">+ 新建卡片</button>
+              </div>
             </div>
 
             <div class="agents-grid" id="term-agents-grid"></div>
@@ -353,6 +356,40 @@
       </div>
     </header>
     <pre class="console-box modal-log-box" id="log-tail-box">—</pre>
+  </section>
+
+  <!-- 新建 / 编辑启动卡片弹窗 -->
+  <div class="backdrop hidden" id="card-modal-backdrop"></div>
+  <section class="modal-dialog card-modal hidden" id="card-modal" role="dialog" aria-modal="true" aria-label="编辑启动卡片">
+    <header class="drawer-head">
+      <h2 id="card-modal-title">新建启动卡片</h2>
+      <button type="button" class="btn btn-ghost btn-xs" id="btn-close-card-modal">关闭</button>
+    </header>
+    <div class="card-modal-body">
+      <label class="field-label">
+        <span>目标 Agent / 类型</span>
+        <select id="in-card-preset"></select>
+      </label>
+      <label class="field-label">
+        <span>卡片名称</span>
+        <input type="text" id="in-card-name" placeholder="例如 Claude Code · 实证主力" />
+      </label>
+      <label class="field-label" id="card-cmd-field">
+        <span>终端启动命令（留空则仅打开默认终端）</span>
+        <input type="text" id="in-card-cmd" placeholder="例如 claude 或 claude --dangerously-skip-permissions" />
+      </label>
+      <div class="field-label">
+        <div class="card-header-row">
+          <span>卡片话语（随机趣味语录，可任意修改）</span>
+          <button type="button" class="btn btn-ghost btn-xs" id="btn-shuffle-tagline">换一句</button>
+        </div>
+        <input type="text" id="in-card-tagline" placeholder="输入一句你想展示在卡片上的话…" />
+      </div>
+    </div>
+    <footer class="card-modal-foot">
+      <button type="button" class="btn btn-ghost btn-sm" id="btn-cancel-card-modal">取消</button>
+      <button type="button" class="btn btn-primary btn-sm" id="btn-save-card">保存卡片</button>
+    </footer>
   </section>
 
   <div class="m3-snackbar" id="app-snackbar" role="status" aria-live="polite"></div>

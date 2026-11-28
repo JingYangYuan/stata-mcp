@@ -693,7 +693,7 @@ select:focus {
   box-shadow: var(--shadow-sm);
 }
 .agent-card.missing {
-  opacity: 0.55;
+  opacity: 0.65;
   cursor: not-allowed;
 }
 .agent-head {
@@ -701,6 +701,57 @@ select:focus {
   align-items: center;
   justify-content: space-between;
   gap: 6px;
+}
+.agent-head-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.agent-card-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0.72;
+  transition: opacity 0.15s ease;
+}
+.agent-card:hover .agent-card-actions,
+.agent-card:focus-within .agent-card-actions {
+  opacity: 1;
+}
+.card-action-btn {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  padding: 2px 5px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.card-action-btn:hover {
+  background: var(--surface-subtle);
+  color: var(--text);
+}
+.card-action-btn.danger:hover {
+  background: var(--err-soft);
+  color: var(--err);
+}
+.agents-empty {
+  grid-column: 1 / -1;
+  padding: 28px 18px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
+}
+.agents-empty-text {
+  font-size: 13px;
+  color: var(--muted);
 }
 .agent-name {
   font-size: 13.5px;
@@ -977,6 +1028,22 @@ select:focus {
   margin: 14px 18px 18px;
   max-height: 62vh;
   flex: 1;
+}
+.card-modal {
+  width: min(480px, 92vw);
+}
+.card-modal-body {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.card-modal-foot {
+  padding: 12px 18px 16px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .m3-snackbar {

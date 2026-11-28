@@ -1,5 +1,30 @@
 const api = window.stataMcpDesktop;
 
+const PLAYFUL_TAGLINES = [
+  "终端里的赛博包工头，喝口咖啡的工夫活全干完了",
+  "放权一时爽，Token 火葬场，但出活是真香",
+  "沉默卷王已就位，给个方向就闷头敲到天亮",
+  "百万上下文大记忆恢复术，整个目录塞脑子里也不忘",
+  "反重力起飞，写代码不靠手速全靠念力",
+  "Tab 键按到冒烟，顺便祈祷今天额度别限流",
+  "老牌正宫宇宙战舰，插件一装稳坐钓鱼台",
+  "别人限流我补位，性价比冲浪战神",
+  "字节卷王出击，白嫖真香还要什么自行车",
+  "不聊 AI 聊情怀，黑底彩字一开气场直接拉满",
+  "哪怕只敲一句 ls，终端也得是全楼最帅的那个",
+  "祖传 .do 别怕，今天把你的 1/_N 循环全扬了",
+  "祝今天跑回归一把过，核心变量稳稳三颗星 ***",
+  "别慌，报错不过是 Stata 在跟你撒娇",
+  "90% 时间审阅 AI 代码，10% 时间端咖啡假装很忙",
+  "工具天天换，IDE 天天卷，唯一不变的是今晚的截稿日",
+];
+
+function pickRandomTagline(exclude = "") {
+  const pool = PLAYFUL_TAGLINES.filter((line) => line !== exclude);
+  const source = pool.length ? pool : PLAYFUL_TAGLINES;
+  return source[Math.floor(Math.random() * source.length)];
+}
+
 const stateUI = {
   activeTab: "config",
   transport: "stdio",
@@ -13,6 +38,8 @@ const stateUI = {
   userEditedTimeout: false,
   configSnippetText: "{}",
   agents: [],
+  customCards: [],
+  editingCardId: null,
   terminals: [],
   selectedTerminalId: "",
   currentProjectInfo: null,
@@ -410,35 +437,199 @@ function renderTerminalSelector() {
   localStorage.setItem("stata-mcp-terminal-app", chosen.id);
 }
 
-function renderAgentsGrid() {
-  const grid = $("term-agents-grid");
-  if (!stateUI.agents.length) {
-    grid.innerHTML = `<div class="setup-meta">正在探测本机 Agent 与终端…</div>`;
+function loadCustomCards() {
+  try {
+    const raw = JSON.parse(localStorage.getItem("stata-mcp-custom-cards") || "[]");
+    stateUI.customCards = Array.isArray(raw) ? raw : [];
+  } catch {
+    stateUI.customCards = [];
+  }
+}
+
+function saveCustomCards() {
+  localStorage.setItem("stata-mcp-custom-cards", JSON.stringify(stateUI.customCards));
+}
+
+function populateCardPresetSelect() {
+  const select = $("in-card-preset");
+  if (!select) return;
+  select.innerHTML = "";
+  for (const a of stateUI.agents) {
+    const opt = document.createElement("option");
+    opt.value = a.id;
+    opt.textContent = `${a.name}（${a.installed ? "已就绪" : "未检测到"}）`;
+    select.appendChild(opt);
+  }
+  const customOpt = document.createElement("option");
+  customOpt.value = "custom";
+  customOpt.textContent = "自定义终端命令";
+  select.appendChild(customOpt);
+}
+
+function syncCardModalFieldsFromPreset(presetId, { updateName = true } = {}) {
+  const matched = stateUI.agents.find((a) => a.id === presetId);
+  const isApp = matched?.kind === "app";
+  $("card-cmd-field").classList.toggle("hidden", isApp);
+  if (isApp) {
+    $("in-card-cmd").value = "";
+  } else if (presetId === "custom") {
+    if (updateName) $("in-card-cmd").value = "";
+  } else {
+    $("in-card-cmd").value = matched?.command || "";
+  }
+  if (updateName) {
+    $("in-card-name").value = matched ? matched.name : "";
+  }
+}
+
+function openCardModal(card = null) {
+  populateCardPresetSelect();
+  if (card) {
+    stateUI.editingCardId = card.id;
+    $("card-modal-title").textContent = "编辑启动卡片";
+    const select = $("in-card-preset");
+    const hasOption = [...select.options].some((o) => o.value === card.presetId);
+    const presetVal = hasOption ? card.presetId : "custom";
+    select.value = presetVal;
+    syncCardModalFieldsFromPreset(presetVal, { updateName: false });
+    $("in-card-name").value = card.name || "";
+    if (card.kind !== "app") {
+      $("in-card-cmd").value = card.command || "";
+    }
+    $("in-card-tagline").value = card.tagline || pickRandomTagline();
+  } else {
+    stateUI.editingCardId = null;
+    $("card-modal-title").textContent = "新建启动卡片";
+    const firstReady = stateUI.agents.find((a) => a.installed) || stateUI.agents[0];
+    const presetVal = firstReady?.id || "custom";
+    $("in-card-preset").value = presetVal;
+    syncCardModalFieldsFromPreset(presetVal, { updateName: true });
+    $("in-card-tagline").value = pickRandomTagline();
+  }
+  $("card-modal-backdrop").classList.remove("hidden");
+  $("card-modal").classList.remove("hidden");
+}
+
+function closeCardModal() {
+  $("card-modal-backdrop").classList.add("hidden");
+  $("card-modal").classList.add("hidden");
+  stateUI.editingCardId = null;
+}
+
+function saveCardFromModal() {
+  const presetId = $("in-card-preset").value || "custom";
+  const matched = stateUI.agents.find((a) => a.id === presetId);
+  const kind = matched?.kind === "app" ? "app" : "cli";
+  const name = $("in-card-name").value.trim() || matched?.name || "";
+  if (!name) {
+    showSnackbar("请输入卡片名称");
     return;
   }
-  const termName = getSelectedTerminal()?.name || "默认终端";
-  grid.innerHTML = stateUI.agents
-    .map((a) => {
-      const cls = a.installed ? "installed" : "missing";
-      const badgeText = a.installed ? (a.kind === "app" ? "应用已就绪" : "CLI 已就绪") : "未检测到";
-      const desc =
-        a.id === "shell"
-          ? `在当前目录打开 ${termName}`
-          : a.kind === "cli" && a.command
-            ? `使用 ${termName} 运行 ${a.command}`
-            : a.desc;
-      return `<button type="button" class="agent-card ${cls}" data-agent-id="${escapeHtml(a.id)}" ${a.installed ? "" : "disabled"}>
+  const command = kind === "app" ? "" : $("in-card-cmd").value.trim();
+  const tagline = $("in-card-tagline").value.trim() || pickRandomTagline();
+  const payload = {
+    id: stateUI.editingCardId || `card-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    presetId,
+    kind,
+    name,
+    command,
+    tagline,
+  };
+  if (stateUI.editingCardId) {
+    stateUI.customCards = stateUI.customCards.map((c) => (c.id === stateUI.editingCardId ? payload : c));
+    showSnackbar(`已更新卡片：${name}`);
+  } else {
+    stateUI.customCards = [...stateUI.customCards, payload];
+    showSnackbar(`已添加卡片：${name}`);
+  }
+  saveCustomCards();
+  closeCardModal();
+  renderAgentsGrid();
+}
+
+function renderAgentsGrid() {
+  const grid = $("term-agents-grid");
+  if (!stateUI.customCards.length) {
+    grid.innerHTML = `<div class="agents-empty">
+      <div class="agents-empty-text">还没有启动卡片，按你的习惯自由创建（内置随机趣味卡片话语）</div>
+      <button type="button" class="btn btn-secondary btn-sm js-empty-add-card">+ 新建卡片</button>
+    </div>`;
+    grid.querySelector(".js-empty-add-card")?.addEventListener("click", () => openCardModal(null));
+    return;
+  }
+
+  const agentsById = new Map(stateUI.agents.map((a) => [a.id, a]));
+  grid.innerHTML = stateUI.customCards
+    .map((card) => {
+      const matched = agentsById.get(card.presetId);
+      const appMissing = card.kind === "app" && matched && !matched.installed;
+      const cls = appMissing ? "missing" : "installed";
+      const badgeText =
+        card.kind === "app"
+          ? appMissing
+            ? "未检测到"
+            : "应用已就绪"
+          : card.command
+            ? "CLI 命令"
+            : "默认终端";
+      const desc = card.tagline || pickRandomTagline();
+      return `<div class="agent-card ${cls}" role="button" tabindex="0" data-card-id="${escapeHtml(card.id)}">
         <div class="agent-head">
-          <span class="agent-name">${escapeHtml(a.name)}</span>
-          <span class="agent-badge">${badgeText}</span>
+          <span class="agent-name">${escapeHtml(card.name)}</span>
+          <div class="agent-head-right">
+            <span class="agent-badge">${escapeHtml(badgeText)}</span>
+            <div class="agent-card-actions">
+              <button type="button" class="card-action-btn" data-edit-card="${escapeHtml(card.id)}">编辑</button>
+              <button type="button" class="card-action-btn danger" data-delete-card="${escapeHtml(card.id)}">删除</button>
+            </div>
+          </div>
         </div>
         <div class="agent-desc">${escapeHtml(desc)}</div>
-      </button>`;
+      </div>`;
     })
     .join("");
 
-  grid.querySelectorAll(".agent-card[data-agent-id]").forEach((btn) => {
-    btn.addEventListener("click", () => launchSelectedAgent(btn.dataset.agentId));
+  grid.querySelectorAll("[data-edit-card]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const card = stateUI.customCards.find((c) => c.id === btn.dataset.editCard);
+      if (card) openCardModal(card);
+    });
+  });
+
+  grid.querySelectorAll("[data-delete-card]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const targetId = btn.dataset.deleteCard;
+      stateUI.customCards = stateUI.customCards.filter((c) => c.id !== targetId);
+      saveCustomCards();
+      renderAgentsGrid();
+      showSnackbar("已删除卡片");
+    });
+  });
+
+  grid.querySelectorAll(".agent-card[data-card-id]").forEach((cardEl) => {
+    const triggerLaunch = () => {
+      const card = stateUI.customCards.find((c) => c.id === cardEl.dataset.cardId);
+      if (!card) return;
+      if (card.kind === "app") {
+        const matched = agentsById.get(card.presetId);
+        if (matched && !matched.installed) {
+          showSnackbar(`未在本机检测到 ${matched.name}`);
+          return;
+        }
+        launchSelectedAgent(card.presetId);
+      } else {
+        launchSelectedAgent(card.command ? "custom" : "shell", card.command);
+      }
+    };
+    cardEl.addEventListener("click", triggerLaunch);
+    cardEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        triggerLaunch();
+      }
+    });
   });
 }
 
@@ -477,6 +668,7 @@ async function launchSelectedAgent(agentId, customCommand = "") {
 
 async function refreshTerminalPage() {
   loadSavedProjects();
+  loadCustomCards();
   if (!$("term-folder-input").value.trim()) {
     const savedLast = localStorage.getItem("stata-mcp-last-project") || "";
     if (savedLast) $("term-folder-input").value = savedLast;
@@ -836,6 +1028,17 @@ function wireEvents() {
     const termName = getSelectedTerminal()?.name || stateUI.selectedTerminalId;
     showSnackbar(`默认终端已切换为 ${termName}`);
   });
+  $("btn-add-agent-card").addEventListener("click", () => openCardModal(null));
+  $("btn-close-card-modal").addEventListener("click", closeCardModal);
+  $("btn-cancel-card-modal").addEventListener("click", closeCardModal);
+  $("card-modal-backdrop").addEventListener("click", closeCardModal);
+  $("in-card-preset").addEventListener("change", (e) => {
+    syncCardModalFieldsFromPreset(e.target.value, { updateName: !stateUI.editingCardId });
+  });
+  $("btn-shuffle-tagline").addEventListener("click", () => {
+    $("in-card-tagline").value = pickRandomTagline($("in-card-tagline").value);
+  });
+  $("btn-save-card").addEventListener("click", saveCardFromModal);
   $("btn-launch-custom-agent").addEventListener("click", () => {
     launchSelectedAgent("custom", $("in-custom-agent-cmd").value.trim());
   });
@@ -877,6 +1080,7 @@ function wireEvents() {
     if (e.key === "Escape") {
       closeAdvancedDrawer();
       closeLogModal();
+      closeCardModal();
     }
   });
 }
