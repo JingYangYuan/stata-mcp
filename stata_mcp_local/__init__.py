@@ -11,5 +11,5 @@ Design constraints (deliberate, see docs/PRIVACY.md and docs/ARCHITECTURE.md):
   the optional upstream source checkout are *discovered* or passed explicitly.
 """
 
-__version__ = "1.5.0"
+__version__ = "1.5.1"
 __all__ = ["__version__"]

@@ -1,14 +1,5 @@
 const api = window.stataMcpDesktop;
 
-const RESEARCH_WORKFLOW_PROMPT = [
-  "请使用已连接的 stata-mcp 工具完成本项目的 Stata 实证任务，严格遵循 5 步标准工作流：",
-  "1. 读取数据：先用 stata_describe / stata_inspect_data 了解变量名、类型、观测值与缺失情况；",
-  "2. 核查命令与帮助：编写代码前先用 stata_which / stata_help 核对官方或 SSC 命令语法与选项；",
-  "3. 运行任务：长任务优先用 stata_run_file + stata_job_tail 追踪每一步输出；",
-  "4. 报错排查重跑：一旦报错，用 stata_diagnose_error 定位精确行号与原因，再用 stata_run_lines 局部验证；",
-  "5. 破除循环提可读：提交前运行 stata_lint_do，按 stata_vectorize_guide 尽量使用 bysort / egen / 因子变量 / frame 替代低效观测值循环。",
-].join("\n");
-
 const stateUI = {
   activeTab: "config",
   transport: "stdio",
@@ -22,6 +13,8 @@ const stateUI = {
   userEditedTimeout: false,
   configSnippetText: "{}",
   agents: [],
+  terminals: [],
+  selectedTerminalId: "",
   currentProjectInfo: null,
   pinnedProjects: [],
   recentProjects: [],
@@ -380,13 +373,41 @@ async function selectResearchFolder(folderPath) {
   $("term-folder-meta").innerHTML = [
     `<span class="info-chip">${info.doCount} 个 .do</span>`,
     `<span class="info-chip">${info.dtaCount} 个 .dta</span>`,
-    info.hasStataMcpEntry
-      ? `<span class="info-chip ok">.mcp.json 已就绪</span>`
-      : info.hasMcpJson
-        ? `<span class="info-chip">.mcp.json 未含 stata-mcp</span>`
-        : `<span class="info-chip">无项目 .mcp.json</span>`,
   ].join("");
   renderProjectPills();
+}
+
+function getSelectedTerminal() {
+  const installed = stateUI.terminals.filter((t) => t.installed);
+  return installed.find((t) => t.id === stateUI.selectedTerminalId) || installed[0] || null;
+}
+
+function renderTerminalSelector() {
+  const select = $("term-app-select");
+  if (!select) return;
+  const installed = stateUI.terminals.filter((t) => t.installed);
+  select.innerHTML = "";
+  if (!installed.length) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "未检测到终端";
+    select.appendChild(opt);
+    select.disabled = true;
+    stateUI.selectedTerminalId = "";
+    return;
+  }
+  select.disabled = false;
+  for (const t of installed) {
+    const opt = document.createElement("option");
+    opt.value = t.id;
+    opt.textContent = t.name;
+    select.appendChild(opt);
+  }
+  const saved = localStorage.getItem("stata-mcp-terminal-app") || "";
+  const chosen = installed.find((t) => t.id === saved) || installed[0];
+  stateUI.selectedTerminalId = chosen.id;
+  select.value = chosen.id;
+  localStorage.setItem("stata-mcp-terminal-app", chosen.id);
 }
 
 function renderAgentsGrid() {
@@ -395,16 +416,23 @@ function renderAgentsGrid() {
     grid.innerHTML = `<div class="setup-meta">正在探测本机 Agent 与终端…</div>`;
     return;
   }
+  const termName = getSelectedTerminal()?.name || "默认终端";
   grid.innerHTML = stateUI.agents
     .map((a) => {
       const cls = a.installed ? "installed" : "missing";
       const badgeText = a.installed ? (a.kind === "app" ? "应用已就绪" : "CLI 已就绪") : "未检测到";
+      const desc =
+        a.id === "shell"
+          ? `在当前目录打开 ${termName}`
+          : a.kind === "cli" && a.command
+            ? `使用 ${termName} 运行 ${a.command}`
+            : a.desc;
       return `<button type="button" class="agent-card ${cls}" data-agent-id="${escapeHtml(a.id)}" ${a.installed ? "" : "disabled"}>
         <div class="agent-head">
           <span class="agent-name">${escapeHtml(a.name)}</span>
           <span class="agent-badge">${badgeText}</span>
         </div>
-        <div class="agent-desc">${escapeHtml(a.desc)}</div>
+        <div class="agent-desc">${escapeHtml(desc)}</div>
       </button>`;
     })
     .join("");
@@ -427,6 +455,7 @@ async function launchSelectedAgent(agentId, customCommand = "") {
       folderPath,
       agentId,
       customCommand,
+      terminalId: stateUI.selectedTerminalId,
       ensureService,
     });
     if (!res.ok) {
@@ -434,11 +463,12 @@ async function launchSelectedAgent(agentId, customCommand = "") {
       if (res.needsInstall) switchTab("config");
       return;
     }
+    const viaTerm = res.terminalName ? `（${res.terminalName}）` : "";
     if (res.serviceStarted) {
       refreshOverview();
-      showSnackbar(`已自动启动 Stata MCP 并打开 ${res.launched}`, 3000);
+      showSnackbar(`已自动启动 Stata MCP 并打开 ${res.launched}${viaTerm}`, 3000);
     } else {
-      showSnackbar(`已在项目目录启动：${res.launched}`, 2500);
+      showSnackbar(`已在项目目录启动：${res.launched}${viaTerm}`, 2500);
     }
   } finally {
     setGlobalBusy(false);
@@ -451,11 +481,14 @@ async function refreshTerminalPage() {
     const savedLast = localStorage.getItem("stata-mcp-last-project") || "";
     if (savedLast) $("term-folder-input").value = savedLast;
   }
-  const [agents] = await Promise.all([
+  const [agents, terminals] = await Promise.all([
     api.detectAgents(),
+    api.detectTerminals(),
     selectResearchFolder($("term-folder-input").value.trim()),
   ]);
   stateUI.agents = agents || [];
+  stateUI.terminals = terminals || [];
+  renderTerminalSelector();
   renderAgentsGrid();
 }
 
@@ -796,26 +829,13 @@ function wireEvents() {
     saveProjectsState();
     renderProjectPills();
   });
-  $("btn-write-project-mcp").addEventListener("click", async () => {
-    const dir = $("term-folder-input").value.trim();
-    if (!dir) {
-      showSnackbar("请先选择项目文件夹");
-      return;
-    }
-    const res = await api.writeProjectMcp({
-      folderPath: dir,
-      transport: stateUI.transport,
-    });
-    if (res.ok) {
-      showSnackbar("已将 stata-mcp 写入项目 .mcp.json");
-      selectResearchFolder(dir);
-    } else {
-      showSnackbar(res.output || res.message || "写入失败", 3000);
-    }
+  $("term-app-select").addEventListener("change", (e) => {
+    stateUI.selectedTerminalId = e.target.value;
+    localStorage.setItem("stata-mcp-terminal-app", stateUI.selectedTerminalId);
+    renderAgentsGrid();
+    const termName = getSelectedTerminal()?.name || stateUI.selectedTerminalId;
+    showSnackbar(`默认终端已切换为 ${termName}`);
   });
-  $("btn-copy-research-prompt").addEventListener("click", () =>
-    copyWithFeedback(RESEARCH_WORKFLOW_PROMPT, $("btn-copy-research-prompt")),
-  );
   $("btn-launch-custom-agent").addEventListener("click", () => {
     launchSelectedAgent("custom", $("in-custom-agent-cmd").value.trim());
   });

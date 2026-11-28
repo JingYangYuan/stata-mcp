@@ -158,9 +158,9 @@ ipcMain.handle("app:lint-do", (_e, opts) => service.lintDo(opts));
 ipcMain.handle("app:vectorize-guide", (_e, opts) => service.vectorizeGuide(opts));
 ipcMain.handle("app:read-log", (_e, logName, lines) => service.readLogTail(logName, lines));
 ipcMain.handle("app:detect-agents", () => service.detectAgents());
+ipcMain.handle("app:detect-terminals", () => service.detectTerminals());
 ipcMain.handle("app:inspect-project", (_e, folderPath) => service.inspectProjectDir(folderPath));
 ipcMain.handle("app:launch-agent", (_e, opts) => service.launchAgentInFolder(opts));
-ipcMain.handle("app:write-project-mcp", (_e, opts) => service.writeProjectMcpConfig(opts));
 ipcMain.handle("app:open-folder", async (_e, folderPath) => {
   const target = path.resolve(String(folderPath || "").trim());
   if (!target || !fs.existsSync(target) || !fs.statSync(target).isDirectory()) {

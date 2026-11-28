@@ -730,6 +730,21 @@ select:focus {
   padding-top: 6px;
   border-top: 1px solid var(--border);
 }
+.terminal-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.terminal-picker .setup-meta {
+  margin-top: 0;
+  white-space: nowrap;
+}
+.terminal-picker select {
+  width: auto;
+  min-width: 175px;
+  padding: 5px 10px;
+  font-size: 12.5px;
+}
 
 /* 第 3 页：极简单列时间线 */
 .timeline-list {

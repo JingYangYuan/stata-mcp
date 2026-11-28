@@ -334,9 +334,9 @@ export function detectInstalledAgents({
     },
     {
       id: "shell",
-      name: "系统终端",
+      name: "打开终端",
       kind: "cli",
-      desc: platform === "win32" ? "在当前目录打开 PowerShell" : "在当前目录打开 Terminal",
+      desc: "在当前目录打开所选默认终端",
       alwaysInstalled: true,
       command: "",
     },
@@ -369,6 +369,516 @@ export function detectInstalledAgents({
   });
 
   return items.sort((a, b) => Number(b.installed) - Number(a.installed));
+}
+
+export function detectInstalledTerminals({
+  platform = process.platform,
+  env = process.env,
+  homeDir = os.homedir(),
+  existsSync = fs.existsSync,
+} = {}) {
+  const p = platform === "win32" ? path.win32 : path.posix;
+  const localApp = env.LOCALAPPDATA || p.join(homeDir, "AppData", "Local");
+  const programFiles = env.ProgramFiles || "C:\\Program Files";
+  const programFilesX86 = env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+
+  const firstExisting = (pathsList) => {
+    for (const item of pathsList) {
+      if (!item) continue;
+      try {
+        if (existsSync(item)) return item;
+      } catch {
+        // ignore
+      }
+    }
+    return "";
+  };
+
+  const resolveCli = (bins) => {
+    for (const b of bins) {
+      const hit = findExecutableInPath(b, { platform, env, homeDir, existsSync });
+      if (hit) return hit;
+    }
+    return "";
+  };
+
+  const macAppPaths = (appName) => [
+    p.join("/Applications", appName),
+    p.join(homeDir, "Applications", appName),
+  ];
+
+  let defs = [];
+  if (platform === "darwin") {
+    defs = [
+      { id: "ghostty", name: "Ghostty", apps: macAppPaths("Ghostty.app") },
+      { id: "iterm2", name: "iTerm2", apps: macAppPaths("iTerm.app") },
+      { id: "wezterm", name: "WezTerm", apps: macAppPaths("WezTerm.app"), bins: ["wezterm"] },
+      { id: "kitty", name: "Kitty", apps: macAppPaths("kitty.app"), bins: ["kitty"] },
+      { id: "alacritty", name: "Alacritty", apps: macAppPaths("Alacritty.app"), bins: ["alacritty"] },
+      { id: "warp", name: "Warp", apps: macAppPaths("Warp.app") },
+      {
+        id: "terminal",
+        name: "Terminal.app（系统终端）",
+        apps: ["/System/Applications/Utilities/Terminal.app"],
+        alwaysInstalled: true,
+        defaultTarget: "/System/Applications/Utilities/Terminal.app",
+      },
+    ];
+  } else if (platform === "win32") {
+    defs = [
+      {
+        id: "wt",
+        name: "Windows Terminal",
+        bins: ["wt.exe"],
+        apps: [p.join(localApp, "Microsoft", "WindowsApps", "wt.exe")],
+      },
+      {
+        id: "pwsh",
+        name: "PowerShell 7",
+        bins: ["pwsh.exe"],
+        apps: [p.join(programFiles, "PowerShell", "7", "pwsh.exe")],
+      },
+      {
+        id: "gitbash",
+        name: "Git Bash",
+        apps: [
+          p.join(programFiles, "Git", "git-bash.exe"),
+          p.join(programFilesX86, "Git", "git-bash.exe"),
+          p.join(localApp, "Programs", "Git", "git-bash.exe"),
+        ],
+      },
+      {
+        id: "wezterm",
+        name: "WezTerm",
+        bins: ["wezterm-gui.exe", "wezterm.exe"],
+        apps: [p.join(programFiles, "WezTerm", "wezterm-gui.exe")],
+      },
+      {
+        id: "alacritty",
+        name: "Alacritty",
+        bins: ["alacritty.exe"],
+        apps: [p.join(programFiles, "Alacritty", "alacritty.exe")],
+      },
+      {
+        id: "powershell",
+        name: "Windows PowerShell",
+        bins: ["powershell.exe"],
+        alwaysInstalled: true,
+        defaultTarget: "powershell.exe",
+      },
+      {
+        id: "cmd",
+        name: "命令提示符 (CMD)",
+        bins: ["cmd.exe"],
+        alwaysInstalled: true,
+        defaultTarget: "cmd.exe",
+      },
+    ];
+  } else {
+    defs = [
+      { id: "ghostty", name: "Ghostty", bins: ["ghostty"] },
+      { id: "wezterm", name: "WezTerm", bins: ["wezterm"] },
+      { id: "kitty", name: "Kitty", bins: ["kitty"] },
+      { id: "alacritty", name: "Alacritty", bins: ["alacritty"] },
+      { id: "gnome-terminal", name: "GNOME Terminal", bins: ["gnome-terminal"] },
+      { id: "konsole", name: "Konsole", bins: ["konsole"] },
+      { id: "xfce4-terminal", name: "XFCE Terminal", bins: ["xfce4-terminal"] },
+      { id: "x-terminal-emulator", name: "系统默认终端", bins: ["x-terminal-emulator"] },
+      { id: "xterm", name: "XTerm", bins: ["xterm"] },
+    ];
+  }
+
+  const items = defs.map((d) => {
+    const appTarget = d.apps ? firstExisting(d.apps) : "";
+    const cliTarget = d.bins ? resolveCli(d.bins) : "";
+    const target = appTarget || cliTarget || d.defaultTarget || "";
+    const installed = Boolean(d.alwaysInstalled || appTarget || cliTarget);
+    return {
+      id: d.id,
+      name: d.name,
+      installed,
+      target,
+      platform,
+    };
+  });
+
+  const installedItems = items.filter((i) => i.installed);
+  const missingItems = items.filter((i) => !i.installed);
+  return [...installedItems, ...missingItems];
+}
+
+export function buildTerminalLaunchPlan({
+  platform = process.platform,
+  terminal,
+  targetDir,
+  cmdToRun = "",
+  env = process.env,
+  isAppRunning = false,
+  hasGhosttySdef = false,
+  preferredPowerShell = "powershell.exe",
+  minttyPath = "",
+  gitBashBin = "",
+} = {}) {
+  const cleanCmd = String(cmdToRun || "").trim();
+  const termId = terminal?.id || "terminal";
+  const termTarget = terminal?.target || "";
+
+  if (platform === "darwin") {
+    const userShell = (env.SHELL || "").trim() || "/bin/zsh";
+    const shellBase = path.posix.basename(userShell);
+    const shellFlags = shellBase === "fish" ? ["-l", "-c"] : ["-i", "-l", "-c"];
+    const wrappedCmd = `cd ${posixSingleQuote(targetDir)} && ${cleanCmd}; exec ${posixSingleQuote(userShell)} -l`;
+
+    if (termId === "ghostty") {
+      const appPath = termTarget || "/Applications/Ghostty.app";
+      const openNaPlan = {
+        command: "open",
+        args: cleanCmd
+          ? ["-na", appPath, "--args", `--working-directory=${targetDir}`, "-e", userShell, ...shellFlags, wrappedCmd]
+          : ["-na", appPath, "--args", `--working-directory=${targetDir}`],
+        spawnOpts: {},
+        mode: "detached",
+      };
+      if (isAppRunning && hasGhosttySdef) {
+        const script = [
+          "on run argv",
+          "  set targetDir to item 1 of argv",
+          "  set cmdText to item 2 of argv",
+          '  tell application "Ghostty"',
+          "    set cfg to new surface configuration",
+          "    set initial working directory of cfg to targetDir",
+          '    if cmdText is not "" then',
+          "      set initial input of cfg to (cmdText & linefeed)",
+          "    end if",
+          "    new window with configuration cfg",
+          "    activate",
+          "  end tell",
+          "end run",
+        ].join("\n");
+        return {
+          command: "osascript",
+          args: ["-e", script, targetDir, cleanCmd],
+          spawnOpts: {},
+          mode: "control",
+          fallback: openNaPlan,
+        };
+      }
+      return openNaPlan;
+    }
+
+    if (termId === "terminal") {
+      const shellCmd = cleanCmd
+        ? `cd ${posixSingleQuote(targetDir)} && ${cleanCmd}`
+        : `cd ${posixSingleQuote(targetDir)}`;
+      const script = [
+        "on run argv",
+        "  set cmdText to item 1 of argv",
+        '  set wasRunning to (application "Terminal" is running)',
+        '  tell application "Terminal"',
+        "    if not wasRunning then",
+        "      launch",
+        "      repeat 10 times",
+        "        if (count of windows) > 0 then exit repeat",
+        "        delay 0.05",
+        "      end repeat",
+        "      if (count of windows) > 0 then",
+        "        do script cmdText in front window",
+        "      else",
+        "        do script cmdText",
+        "      end if",
+        "      activate",
+        "    else",
+        "      do script cmdText",
+        "      activate",
+        "    end if",
+        "  end tell",
+        "end run",
+      ].join("\n");
+      return {
+        command: "osascript",
+        args: ["-e", script, shellCmd],
+        spawnOpts: {},
+        mode: "control",
+      };
+    }
+
+    if (termId === "iterm2") {
+      const shellCmd = cleanCmd
+        ? `cd ${posixSingleQuote(targetDir)} && ${cleanCmd}`
+        : `cd ${posixSingleQuote(targetDir)}`;
+      const script = [
+        "on run argv",
+        "  set cmdText to item 1 of argv",
+        '  set wasRunning to (application "iTerm" is running)',
+        '  tell application "iTerm"',
+        "    if not wasRunning then",
+        "      launch",
+        "      repeat 10 times",
+        "        if (count of windows) > 0 then exit repeat",
+        "        delay 0.05",
+        "      end repeat",
+        "      if (count of windows) > 0 then",
+        "        tell current session of current window to write text cmdText",
+        "      else",
+        "        set newWin to (create window with default profile)",
+        "        tell current session of newWin to write text cmdText",
+        "      end if",
+        "      activate",
+        "    else",
+        "      set newWin to (create window with default profile)",
+        "      tell current session of newWin to write text cmdText",
+        "      activate",
+        "    end if",
+        "  end tell",
+        "end run",
+      ].join("\n");
+      return {
+        command: "osascript",
+        args: ["-e", script, shellCmd],
+        spawnOpts: {},
+        mode: "control",
+      };
+    }
+
+    if (termId === "wezterm") {
+      const bin = termTarget.endsWith(".app")
+        ? path.posix.join(termTarget, "Contents", "MacOS", "wezterm")
+        : termTarget || "wezterm";
+      return {
+        command: bin,
+        args: cleanCmd
+          ? ["start", "--cwd", targetDir, "--", userShell, ...shellFlags, wrappedCmd]
+          : ["start", "--cwd", targetDir],
+        spawnOpts: {},
+        mode: "detached",
+      };
+    }
+
+    if (termId === "kitty") {
+      const bin = termTarget.endsWith(".app")
+        ? path.posix.join(termTarget, "Contents", "MacOS", "kitty")
+        : termTarget || "kitty";
+      return {
+        command: bin,
+        args: cleanCmd
+          ? ["--directory", targetDir, userShell, ...shellFlags, wrappedCmd]
+          : ["--directory", targetDir],
+        spawnOpts: {},
+        mode: "detached",
+      };
+    }
+
+    if (termId === "alacritty") {
+      const bin = termTarget.endsWith(".app")
+        ? path.posix.join(termTarget, "Contents", "MacOS", "alacritty")
+        : termTarget || "alacritty";
+      return {
+        command: bin,
+        args: cleanCmd
+          ? ["--working-directory", targetDir, "-e", userShell, ...shellFlags, wrappedCmd]
+          : ["--working-directory", targetDir],
+        spawnOpts: {},
+        mode: "detached",
+      };
+    }
+
+    if (termId === "warp") {
+      if (!cleanCmd) {
+        return {
+          command: "open",
+          args: ["-a", termTarget || "/Applications/Warp.app", targetDir],
+          spawnOpts: {},
+          mode: "detached",
+        };
+      }
+      const warpLaunchYaml = [
+        "name: stata-mcp-launch",
+        "windows:",
+        "  - tabs:",
+        "      - layout:",
+        `          cwd: ${JSON.stringify(targetDir)}`,
+        "          commands:",
+        `            - exec: ${JSON.stringify(cleanCmd)}`,
+        "",
+      ].join("\n");
+      return {
+        command: "open",
+        args: ["warp://launch/stata-mcp-launch.yaml"],
+        spawnOpts: {},
+        mode: "detached",
+        warpLaunchYaml,
+      };
+    }
+  }
+
+  if (platform === "win32") {
+    const psEscapedDir = targetDir.replace(/'/g, "''");
+    const psCmd = cleanCmd
+      ? `Set-Location -LiteralPath '${psEscapedDir}'; ${cleanCmd}`
+      : `Set-Location -LiteralPath '${psEscapedDir}'`;
+
+    if (termId === "wt") {
+      return {
+        command: termTarget || "wt.exe",
+        args: cleanCmd
+          ? ["-d", targetDir, preferredPowerShell, "-NoExit", "-Command", psCmd]
+          : ["-d", targetDir],
+        spawnOpts: { windowsHide: false },
+        mode: "detached",
+      };
+    }
+
+    if (termId === "pwsh") {
+      return {
+        command: "cmd.exe",
+        args: ["/c", "start", "", "/D", targetDir, termTarget || "pwsh.exe", "-NoExit", "-Command", psCmd],
+        spawnOpts: { cwd: targetDir, windowsHide: true },
+        mode: "detached",
+      };
+    }
+
+    if (termId === "powershell") {
+      return {
+        command: "cmd.exe",
+        args: ["/c", "start", "", "/D", targetDir, "powershell.exe", "-NoExit", "-Command", psCmd],
+        spawnOpts: { cwd: targetDir, windowsHide: true },
+        mode: "detached",
+      };
+    }
+
+    if (termId === "gitbash") {
+      if (cleanCmd && minttyPath) {
+        return {
+          command: minttyPath,
+          args: ["-e", gitBashBin || "/bin/bash", "-lic", `${cleanCmd}; exec bash -i`],
+          spawnOpts: { cwd: targetDir, windowsHide: false },
+          mode: "detached",
+        };
+      }
+      if (cleanCmd) {
+        return {
+          command: termTarget,
+          args: [`--cd=${targetDir}`, "-c", `${cleanCmd}; exec bash -i`],
+          spawnOpts: { cwd: targetDir, windowsHide: false },
+          mode: "detached",
+        };
+      }
+      return {
+        command: termTarget,
+        args: [`--cd=${targetDir}`],
+        spawnOpts: { cwd: targetDir, windowsHide: false },
+        mode: "detached",
+      };
+    }
+
+    if (termId === "wezterm") {
+      return {
+        command: termTarget,
+        args: cleanCmd
+          ? ["start", "--cwd", targetDir, "--", preferredPowerShell, "-NoExit", "-Command", psCmd]
+          : ["start", "--cwd", targetDir],
+        spawnOpts: { windowsHide: false },
+        mode: "detached",
+      };
+    }
+
+    if (termId === "alacritty") {
+      return {
+        command: termTarget,
+        args: cleanCmd
+          ? ["--working-directory", targetDir, "-e", preferredPowerShell, "-NoExit", "-Command", psCmd]
+          : ["--working-directory", targetDir],
+        spawnOpts: { windowsHide: false },
+        mode: "detached",
+      };
+    }
+
+    // cmd
+    return {
+      command: "cmd.exe",
+      args: cleanCmd
+        ? ["/c", "start", "", "/D", targetDir, "cmd.exe", "/K", cleanCmd]
+        : ["/c", "start", "", "/D", targetDir, "cmd.exe"],
+      spawnOpts: { cwd: targetDir, windowsHide: true },
+      mode: "detached",
+    };
+  }
+
+  // Linux fallback & modern terminals
+  const userShell = (env.SHELL || "").trim() || "/bin/bash";
+  const shellCmd = cleanCmd
+    ? `cd ${posixSingleQuote(targetDir)} && ${cleanCmd}; exec ${posixSingleQuote(userShell)}`
+    : `cd ${posixSingleQuote(targetDir)}; exec ${posixSingleQuote(userShell)}`;
+  const bin = termTarget || termId;
+
+  if (termId === "ghostty") {
+    return {
+      command: bin,
+      args: cleanCmd
+        ? [`--working-directory=${targetDir}`, "-e", "bash", "-lc", shellCmd]
+        : [`--working-directory=${targetDir}`],
+      spawnOpts: {},
+      mode: "detached",
+    };
+  }
+  if (termId === "wezterm") {
+    return {
+      command: bin,
+      args: cleanCmd
+        ? ["start", "--cwd", targetDir, "--", "bash", "-lc", shellCmd]
+        : ["start", "--cwd", targetDir],
+      spawnOpts: {},
+      mode: "detached",
+    };
+  }
+  if (termId === "kitty") {
+    return {
+      command: bin,
+      args: cleanCmd ? ["--directory", targetDir, "bash", "-lc", shellCmd] : ["--directory", targetDir],
+      spawnOpts: {},
+      mode: "detached",
+    };
+  }
+  if (termId === "alacritty") {
+    return {
+      command: bin,
+      args: cleanCmd
+        ? ["--working-directory", targetDir, "-e", "bash", "-lc", shellCmd]
+        : ["--working-directory", targetDir],
+      spawnOpts: {},
+      mode: "detached",
+    };
+  }
+  if (termId === "gnome-terminal") {
+    return {
+      command: bin,
+      args: [`--working-directory=${targetDir}`, "--", "bash", "-lc", shellCmd],
+      spawnOpts: {},
+      mode: "detached",
+    };
+  }
+  if (termId === "konsole") {
+    return {
+      command: bin,
+      args: ["--workdir", targetDir, "-e", "bash", "-lc", shellCmd],
+      spawnOpts: {},
+      mode: "detached",
+    };
+  }
+  if (termId === "xfce4-terminal") {
+    return {
+      command: bin,
+      args: [`--working-directory=${targetDir}`, "-e", `bash -lc ${posixSingleQuote(shellCmd)}`],
+      spawnOpts: {},
+      mode: "detached",
+    };
+  }
+  return {
+    command: bin,
+    args: ["-e", "bash", "-lc", shellCmd],
+    spawnOpts: {},
+    mode: "detached",
+  };
 }
 
 export function inspectResearchFolder(dirPath) {
@@ -853,21 +1363,55 @@ export class CoreService {
     });
   }
 
+  detectTerminals() {
+    return detectInstalledTerminals({
+      platform: this.platform,
+      env: this.env,
+    });
+  }
+
   inspectProjectDir(folderPath) {
     return inspectResearchFolder(folderPath);
   }
 
-  async writeProjectMcpConfig({ folderPath, transport = "stdio", dryRun = false } = {}) {
-    const check = inspectResearchFolder(folderPath);
-    if (!check.ok) {
-      return { ok: false, message: check.error };
-    }
-    return this.writeClientConfig({
-      filePath: path.join(check.path, ".mcp.json"),
-      transport,
-      root: "mcpServers",
-      key: "stata-mcp",
-      dryRun,
+  _runControlCommand(command, args, { timeoutMs = 6000 } = {}) {
+    return new Promise((resolve) => {
+      try {
+        const child = spawn(command, args, {
+          env: this.env,
+          windowsHide: true,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        let stdout = "";
+        let stderr = "";
+        let finished = false;
+        const timer = setTimeout(() => {
+          if (finished) return;
+          finished = true;
+          this._killChildTree(child);
+          resolve({ ok: false, code: -1, stdout, stderr: stderr || "Command timed out" });
+        }, timeoutMs);
+        child.stdout.on("data", (c) => {
+          stdout += c.toString("utf8");
+        });
+        child.stderr.on("data", (c) => {
+          stderr += c.toString("utf8");
+        });
+        child.on("error", (err) => {
+          if (finished) return;
+          finished = true;
+          clearTimeout(timer);
+          resolve({ ok: false, code: -1, stdout, stderr: err.message });
+        });
+        child.on("close", (code) => {
+          if (finished) return;
+          finished = true;
+          clearTimeout(timer);
+          resolve({ ok: (code ?? 0) === 0, code: code ?? 0, stdout, stderr: stderr.trim() });
+        });
+      } catch (err) {
+        resolve({ ok: false, code: -1, stdout: "", stderr: err.message });
+      }
     });
   }
 
@@ -898,7 +1442,13 @@ export class CoreService {
     });
   }
 
-  async launchAgentInFolder({ folderPath, agentId = "shell", customCommand = "", ensureService = true } = {}) {
+  async launchAgentInFolder({
+    folderPath,
+    agentId = "shell",
+    customCommand = "",
+    terminalId = "",
+    ensureService = true,
+  } = {}) {
     const info = inspectResearchFolder(folderPath);
     if (!info.ok) {
       return { ok: false, error: info.error };
@@ -974,57 +1524,79 @@ export class CoreService {
       return { ok: false, error: `未在 PATH 中检测到 ${matched.name} (${matched.command})` };
     }
 
+    const terminals = this.detectTerminals();
+    const installedTerminals = terminals.filter((t) => t.installed);
+    const selectedTerminal =
+      (terminalId ? installedTerminals.find((t) => t.id === terminalId) : null) || installedTerminals[0];
+    if (!selectedTerminal) {
+      return { ok: false, error: "未检测到可用的终端应用" };
+    }
+
+    let isAppRunning = false;
+    let hasGhosttySdef = false;
+    if (this.platform === "darwin" && selectedTerminal.id === "ghostty") {
+      const pgrepRes = await this._runControlCommand("pgrep", ["-x", "ghostty"], { timeoutMs: 2000 });
+      isAppRunning = pgrepRes.ok;
+      hasGhosttySdef = Boolean(
+        selectedTerminal.target &&
+          fs.existsSync(path.join(selectedTerminal.target, "Contents", "Resources", "Ghostty.sdef")),
+      );
+    }
+
+    let preferredPowerShell = "powershell.exe";
+    let minttyPath = "";
+    let gitBashBin = "";
+    if (this.platform === "win32") {
+      const pwshTerm = installedTerminals.find((t) => t.id === "pwsh");
+      if (pwshTerm?.target) preferredPowerShell = pwshTerm.target;
+      if (selectedTerminal.id === "gitbash" && selectedTerminal.target) {
+        const gitRoot = path.win32.dirname(selectedTerminal.target);
+        const candMintty = path.win32.join(gitRoot, "usr", "bin", "mintty.exe");
+        const candBash = path.win32.join(gitRoot, "bin", "bash.exe");
+        if (fs.existsSync(candMintty)) minttyPath = candMintty;
+        if (fs.existsSync(candBash)) gitBashBin = candBash;
+      }
+    }
+
+    const plan = buildTerminalLaunchPlan({
+      platform: this.platform,
+      terminal: selectedTerminal,
+      targetDir,
+      cmdToRun,
+      env: this.env,
+      isAppRunning,
+      hasGhosttySdef,
+      preferredPowerShell,
+      minttyPath,
+      gitBashBin,
+    });
+
+    if (plan.warpLaunchYaml) {
+      const warpCfgDir = path.join(os.homedir(), ".warp", "launch_configurations");
+      fs.mkdirSync(warpCfgDir, { recursive: true });
+      fs.writeFileSync(path.join(warpCfgDir, "stata-mcp-launch.yaml"), plan.warpLaunchYaml, "utf8");
+    }
+
     let termRes;
-    if (this.platform === "darwin") {
-      const shellCmd = cmdToRun
-        ? `cd ${posixSingleQuote(targetDir)} && ${cmdToRun}`
-        : `cd ${posixSingleQuote(targetDir)}`;
-      const appleScript = [
-        "on run argv",
-        '  tell application "Terminal"',
-        "    activate",
-        "    do script (item 1 of argv)",
-        "  end tell",
-        "end run",
-      ].join("\n");
-      termRes = await this._spawnDetached("osascript", ["-e", appleScript, shellCmd]);
-    } else if (this.platform === "win32") {
-      const psEscapedDir = targetDir.replace(/'/g, "''");
-      const psCmd = cmdToRun
-        ? `Set-Location -LiteralPath '${psEscapedDir}'; ${cmdToRun}`
-        : `Set-Location -LiteralPath '${psEscapedDir}'`;
-      const wt = findExecutableInPath("wt.exe", { platform: this.platform, env: this.env });
-      if (wt) {
-        termRes = await this._spawnDetached(wt, ["-d", targetDir, "powershell.exe", "-NoExit", "-Command", psCmd]);
+    if (plan.mode === "control") {
+      const ctrlRes = await this._runControlCommand(plan.command, plan.args);
+      if (ctrlRes.ok) {
+        termRes = { ok: true };
+      } else if (plan.fallback) {
+        termRes = await this._spawnDetached(plan.fallback.command, plan.fallback.args, plan.fallback.spawnOpts);
       } else {
-        termRes = await this._spawnDetached(
-          "cmd.exe",
-          ["/c", "start", "", "powershell.exe", "-NoExit", "-Command", psCmd],
-          { cwd: targetDir },
-        );
+        termRes = { ok: false, error: ctrlRes.stderr || "拉起终端失败" };
       }
     } else {
-      const shellCmd = cmdToRun
-        ? `cd ${posixSingleQuote(targetDir)} && ${cmdToRun}; exec "$SHELL"`
-        : `cd ${posixSingleQuote(targetDir)}; exec "$SHELL"`;
-      const termBin =
-        findExecutableInPath("x-terminal-emulator", { platform: this.platform, env: this.env }) ||
-        findExecutableInPath("gnome-terminal", { platform: this.platform, env: this.env }) ||
-        findExecutableInPath("xterm", { platform: this.platform, env: this.env });
-      if (!termBin) {
-        return { ok: false, error: "未检测到可用的系统终端模拟器" };
-      }
-      if (termBin.endsWith("gnome-terminal")) {
-        termRes = await this._spawnDetached(termBin, [`--working-directory=${targetDir}`, "--", "bash", "-lc", shellCmd]);
-      } else {
-        termRes = await this._spawnDetached(termBin, ["-e", "bash", "-lc", shellCmd]);
-      }
+      termRes = await this._spawnDetached(plan.command, plan.args, plan.spawnOpts);
     }
 
     if (!termRes.ok) return termRes;
     return {
       ok: true,
-      launched: agentId === "custom" ? cmdToRun : matched?.name || "系统终端",
+      launched: agentId === "custom" ? cmdToRun : matched?.name || selectedTerminal.name,
+      terminalId: selectedTerminal.id,
+      terminalName: selectedTerminal.name,
       folderPath: targetDir,
       serviceStarted,
     };

@@ -161,7 +161,7 @@ MCP 客户端 ──stdio──> bin/stata-mcp-bridge.py ──HTTP(127.0.0.1:40
 | 工作区 | 提供的能力 |
 |---|---|
 | 配置 | 极致单屏 3 行（Stata 路径探测、`:4001` 本地服务一键安装/启停/自检、MCP 配置复制）；环境下载镜像（华为云/阿里云/官方）、PyPI 加速源、文件合并写入、端口与卸载收于右上角「高级设置」抽屉 |
-| 科研终端 | 管理常用科研项目目录（自动扫描 `.do`/`.dta` 与 `.mcp.json` 状态），一键在选定目录拉起 Claude Code、Codex、Gemini CLI、Antigravity、Cursor、VS Code、Windsurf、Trae、系统终端或自定义命令，启动前自动确保 `:4001` 在线并可按需写入项目 `.mcp.json` / 复制科研 5 步规范提示词 |
+| 科研终端 | 管理常用科研项目目录（自动扫描 `.do`/`.dta` 数量），支持按平台自由选择默认终端应用（macOS 支持 Ghostty、iTerm2、WezTerm、Kitty、Alacritty、Warp、Terminal.app；Windows 支持 Windows Terminal、PowerShell 7、Git Bash、WezTerm、Alacritty、PowerShell、CMD；Linux 支持主流终端），一键在选定目录直接单窗口拉起 Claude Code、Codex、Gemini CLI、Antigravity、Cursor、VS Code、Windsurf、Trae、默认终端或自定义命令，启动前自动确保 `:4001` 在线 |
 | 实证监控 | 单列倒序可展开时间线实时追踪 Stata 作业、失败时高亮原 `.do` 精确报错行号与修复建议、一键中止运行中作业，右上角弹窗查看 `server.log` |
 
 ### 私有状态目录与隐私保证

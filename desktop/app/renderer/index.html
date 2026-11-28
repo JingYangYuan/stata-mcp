@@ -29,7 +29,7 @@
         </div>
         <div class="brand-text">
           <div class="brand-title">Stata MCP</div>
-          <div class="brand-sub" id="brand-sub-version">v1.5.0 · 单端口</div>
+          <div class="brand-sub" id="brand-sub-version">v1.5.1 · 单端口</div>
         </div>
       </div>
 
@@ -166,7 +166,7 @@
               <p class="header-sub">选定科研项目目录，自动确保 Stata MCP 在线并拉起 AI Agent 开展实证工作</p>
             </div>
             <div class="header-actions">
-              <button type="button" class="btn btn-ghost btn-sm" id="btn-rescan-agents">重新探测 Agent</button>
+              <button type="button" class="btn btn-ghost btn-sm" id="btn-rescan-agents">重新探测</button>
             </div>
           </header>
 
@@ -191,10 +191,6 @@
                 <input type="checkbox" id="chk-ensure-service" checked />
                 <span>启动前自动确保 Stata MCP (:4001) 在线</span>
               </label>
-              <div class="inline-wrap">
-                <button type="button" class="btn btn-ghost btn-sm" id="btn-write-project-mcp">写入项目 .mcp.json</button>
-                <button type="button" class="btn btn-secondary btn-sm" id="btn-copy-research-prompt">复制科研 5 步规范提示词</button>
-              </div>
             </div>
           </section>
 
@@ -202,7 +198,10 @@
           <section class="card section-card">
             <div class="card-header-row">
               <span class="section-label">选择要打开的 Agent / 终端</span>
-              <span class="setup-meta">点击卡片即可在选定目录拉起</span>
+              <label class="terminal-picker" for="term-app-select">
+                <span class="setup-meta">默认终端</span>
+                <select id="term-app-select" aria-label="选择默认终端应用"></select>
+              </label>
             </div>
 
             <div class="agents-grid" id="term-agents-grid"></div>

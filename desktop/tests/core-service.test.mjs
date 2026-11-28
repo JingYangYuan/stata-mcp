@@ -7,8 +7,10 @@ import { fileURLToPath } from "node:url";
 
 import {
   buildAugmentedEnv,
+  buildTerminalLaunchPlan,
   CoreService,
   detectInstalledAgents,
+  detectInstalledTerminals,
   findPythonCommand,
   inspectResearchFolder,
   posixSingleQuote,
@@ -105,11 +107,15 @@ test("renderer HTML contains all 3 tabs and every ID referenced by renderer.mjs"
     "env-mirror-links",
     "pypi-mirror-presets",
     "in-pip-index",
+    "term-app-select",
     "term-agents-grid",
     "monitor-timeline",
     "log-modal",
   ]) {
     assert.ok(html.includes(`id="${extraId}"`), `missing UI id: ${extraId}`);
+  }
+  for (const removedId of ["btn-write-project-mcp", "btn-copy-research-prompt"]) {
+    assert.equal(html.includes(`id="${removedId}"`), false, `removed button should not remain: ${removedId}`);
   }
   assert.ok(
     fs.existsSync(path.join(repoRoot, "server", "src", "stata_mcp_server.py")),
@@ -209,4 +215,192 @@ test("renderer HTML contains no literal markdown backticks in UI text", () => {
     false,
     "index.html should use <code> tags instead of literal backticks",
   );
+});
+
+test("detectInstalledTerminals detects macOS terminals and prioritizes Ghostty", () => {
+  const found = detectInstalledTerminals({
+    platform: "darwin",
+    env: { PATH: "/usr/bin" },
+    homeDir: "/Users/tester",
+    existsSync: (p) => p === "/Applications/Ghostty.app" || p === "/Applications/iTerm.app",
+  });
+  const installedIds = found.filter((t) => t.installed).map((t) => t.id);
+  assert.deepEqual(installedIds, ["ghostty", "iterm2", "terminal"]);
+  assert.equal(found[0].id, "ghostty");
+  assert.equal(found[0].target, "/Applications/Ghostty.app");
+});
+
+test("detectInstalledTerminals detects Windows terminals in priority order", () => {
+  const existing = new Set([
+    "C:\\Users\\t\\AppData\\Local\\Microsoft\\WindowsApps\\wt.exe",
+    "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+    "C:\\Program Files\\Git\\git-bash.exe",
+    "C:\\Program Files\\WezTerm\\wezterm-gui.exe",
+    "C:\\Program Files\\Alacritty\\alacritty.exe",
+  ]);
+  const found = detectInstalledTerminals({
+    platform: "win32",
+    env: {
+      PATH: "C:\\Windows\\System32",
+      LOCALAPPDATA: "C:\\Users\\t\\AppData\\Local",
+      ProgramFiles: "C:\\Program Files",
+      "ProgramFiles(x86)": "C:\\Program Files (x86)",
+    },
+    homeDir: "C:\\Users\\t",
+    existsSync: (p) => existing.has(p),
+  });
+  const installedIds = found.filter((t) => t.installed).map((t) => t.id);
+  assert.deepEqual(installedIds, ["wt", "pwsh", "gitbash", "wezterm", "alacritty", "powershell", "cmd"]);
+});
+
+test("detectInstalledTerminals detects Linux terminals in PATH", () => {
+  const existing = new Set(["/usr/bin/ghostty", "/usr/bin/kitty", "/usr/bin/gnome-terminal"]);
+  const found = detectInstalledTerminals({
+    platform: "linux",
+    env: { PATH: "/usr/bin" },
+    homeDir: "/home/tester",
+    existsSync: (p) => existing.has(p),
+  });
+  const installedIds = found.filter((t) => t.installed).map((t) => t.id);
+  assert.deepEqual(installedIds, ["ghostty", "kitty", "gnome-terminal"]);
+});
+
+test("buildTerminalLaunchPlan for macOS Ghostty supports cold start and running AppleScript with fallback", () => {
+  const ghostty = { id: "ghostty", name: "Ghostty", target: "/Applications/Ghostty.app" };
+  const coldPlan = buildTerminalLaunchPlan({
+    platform: "darwin",
+    terminal: ghostty,
+    targetDir: "/Users/tester/paper dir",
+    cmdToRun: "claude",
+    env: { SHELL: "/bin/zsh" },
+    isAppRunning: false,
+    hasGhosttySdef: true,
+  });
+  assert.equal(coldPlan.command, "open");
+  assert.equal(coldPlan.mode, "detached");
+  assert.deepEqual(coldPlan.args.slice(0, 4), ["-na", "/Applications/Ghostty.app", "--args", "--working-directory=/Users/tester/paper dir"]);
+  assert.equal(coldPlan.args[4], "-e");
+  assert.equal(coldPlan.args[5], "/bin/zsh");
+
+  const warmPlan = buildTerminalLaunchPlan({
+    platform: "darwin",
+    terminal: ghostty,
+    targetDir: "/Users/tester/paper dir",
+    cmdToRun: "codex",
+    env: { SHELL: "/bin/zsh" },
+    isAppRunning: true,
+    hasGhosttySdef: true,
+  });
+  assert.equal(warmPlan.command, "osascript");
+  assert.equal(warmPlan.mode, "control");
+  assert.ok(warmPlan.args[1].includes("new surface configuration"));
+  assert.ok(warmPlan.args[1].includes("new window with configuration cfg"));
+  assert.ok(warmPlan.fallback);
+  assert.equal(warmPlan.fallback.command, "open");
+});
+
+test("buildTerminalLaunchPlan for macOS Terminal.app and iTerm2 avoids creating an empty window", () => {
+  const termPlan = buildTerminalLaunchPlan({
+    platform: "darwin",
+    terminal: { id: "terminal", name: "Terminal.app", target: "/System/Applications/Utilities/Terminal.app" },
+    targetDir: "/Users/tester/proj",
+    cmdToRun: "claude",
+  });
+  assert.equal(termPlan.command, "osascript");
+  assert.equal(termPlan.mode, "control");
+  const termScript = termPlan.args[1];
+  assert.ok(termScript.includes("wasRunning"));
+  assert.ok(termScript.includes("do script cmdText in front window"));
+  // In the already-running branch, do script must happen before activate
+  const elseIdx = termScript.indexOf("else");
+  const branchText = termScript.slice(elseIdx);
+  assert.ok(branchText.indexOf("do script cmdText") < branchText.indexOf("activate"));
+
+  const itermPlan = buildTerminalLaunchPlan({
+    platform: "darwin",
+    terminal: { id: "iterm2", name: "iTerm2", target: "/Applications/iTerm.app" },
+    targetDir: "/Users/tester/proj",
+    cmdToRun: "gemini",
+  });
+  assert.equal(itermPlan.command, "osascript");
+  const itermScript = itermPlan.args[1];
+  assert.ok(itermScript.includes("wasRunning"));
+  assert.ok(itermScript.includes("current session of current window"));
+  const itermElse = itermScript.slice(itermScript.indexOf("else", itermScript.indexOf("create window")));
+  assert.ok(itermElse.indexOf("create window") < itermElse.indexOf("activate"));
+});
+
+test("buildTerminalLaunchPlan builds correct Windows terminal launch commands", () => {
+  const targetDir = "D:\\Research\\Paper 1";
+
+  const wtPlan = buildTerminalLaunchPlan({
+    platform: "win32",
+    terminal: { id: "wt", target: "wt.exe" },
+    targetDir,
+    cmdToRun: "claude",
+    preferredPowerShell: "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+  });
+  assert.equal(wtPlan.command, "wt.exe");
+  assert.deepEqual(wtPlan.args.slice(0, 3), ["-d", targetDir, "C:\\Program Files\\PowerShell\\7\\pwsh.exe"]);
+
+  const pwshPlan = buildTerminalLaunchPlan({
+    platform: "win32",
+    terminal: { id: "pwsh", target: "C:\\Program Files\\PowerShell\\7\\pwsh.exe" },
+    targetDir,
+    cmdToRun: "codex",
+  });
+  assert.equal(pwshPlan.command, "cmd.exe");
+  assert.equal(pwshPlan.spawnOpts.windowsHide, true);
+  assert.ok(pwshPlan.args.includes("C:\\Program Files\\PowerShell\\7\\pwsh.exe"));
+
+  const psPlan = buildTerminalLaunchPlan({
+    platform: "win32",
+    terminal: { id: "powershell", target: "powershell.exe" },
+    targetDir,
+    cmdToRun: "",
+  });
+  assert.equal(psPlan.command, "cmd.exe");
+  assert.equal(psPlan.spawnOpts.windowsHide, true);
+  assert.ok(psPlan.args.includes("powershell.exe"));
+
+  const gitBashPlan = buildTerminalLaunchPlan({
+    platform: "win32",
+    terminal: { id: "gitbash", target: "C:\\Program Files\\Git\\git-bash.exe" },
+    targetDir,
+    cmdToRun: "gemini",
+    minttyPath: "C:\\Program Files\\Git\\usr\\bin\\mintty.exe",
+    gitBashBin: "C:\\Program Files\\Git\\bin\\bash.exe",
+  });
+  assert.equal(gitBashPlan.command, "C:\\Program Files\\Git\\usr\\bin\\mintty.exe");
+  assert.deepEqual(gitBashPlan.args.slice(0, 3), ["-e", "C:\\Program Files\\Git\\bin\\bash.exe", "-lic"]);
+
+  const wezPlan = buildTerminalLaunchPlan({
+    platform: "win32",
+    terminal: { id: "wezterm", target: "C:\\Program Files\\WezTerm\\wezterm-gui.exe" },
+    targetDir,
+    cmdToRun: "claude",
+    preferredPowerShell: "powershell.exe",
+  });
+  assert.equal(wezPlan.command, "C:\\Program Files\\WezTerm\\wezterm-gui.exe");
+  assert.deepEqual(wezPlan.args.slice(0, 4), ["start", "--cwd", targetDir, "--"]);
+
+  const alacrittyPlan = buildTerminalLaunchPlan({
+    platform: "win32",
+    terminal: { id: "alacritty", target: "C:\\Program Files\\Alacritty\\alacritty.exe" },
+    targetDir,
+    cmdToRun: "claude",
+    preferredPowerShell: "powershell.exe",
+  });
+  assert.equal(alacrittyPlan.command, "C:\\Program Files\\Alacritty\\alacritty.exe");
+  assert.deepEqual(alacrittyPlan.args.slice(0, 3), ["--working-directory", targetDir, "-e"]);
+
+  const cmdPlan = buildTerminalLaunchPlan({
+    platform: "win32",
+    terminal: { id: "cmd", target: "cmd.exe" },
+    targetDir,
+    cmdToRun: "codex",
+  });
+  assert.equal(cmdPlan.command, "cmd.exe");
+  assert.equal(cmdPlan.spawnOpts.windowsHide, true);
+  assert.deepEqual(cmdPlan.args, ["/c", "start", "", "/D", targetDir, "cmd.exe", "/K", "codex"]);
 });
